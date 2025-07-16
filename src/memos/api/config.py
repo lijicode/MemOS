@@ -102,7 +102,6 @@ class APIConfig:
                     "api_key": os.getenv("OPENAI_API_KEY", "sk-xxxx"),
                     "model_name_or_path": os.getenv("MOS_EMBEDDER_MODEL", "text-embedding-3-large"),
                     "base_url": os.getenv("OPENAI_API_BASE", "http://openai.com"),
-                    "embedding_dimension": 3072,
                 },
             }
         else:  # ollama
@@ -125,6 +124,7 @@ class APIConfig:
             "db_name": "default",
             "password": os.getenv("NEO4J_PASSWORD", "12345678"),
             "auto_create": True,
+            "embedding_dimension": 3072,
         }
 
     @staticmethod
