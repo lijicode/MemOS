@@ -90,11 +90,38 @@ class APIConfig:
         }
 
     @staticmethod
+    def get_embedder_config() -> dict[str, Any]:
+        """Get embedder configuration."""
+        embedder_backend = os.getenv("MOS_EMBEDDER_BACKEND", "ollama")
+
+        if embedder_backend == "universal_api":
+            return {
+                "backend": "universal_api",
+                "config": {
+                    "provider": os.getenv("MOS_EMBEDDER_PROVIDER", "openai"),
+                    "api_key": os.getenv("OPENAI_API_KEY", "sk-xxxx"),
+                    "model_name_or_path": os.getenv("MOS_EMBEDDER_MODEL", "text-embedding-3-large"),
+                    "base_url": os.getenv("OPENAI_API_BASE", "http://openai.com"),
+                },
+            }
+        else:  # ollama
+            return {
+                "backend": "ollama",
+                "config": {
+                    "model_name_or_path": os.getenv(
+                        "MOS_EMBEDDER_MODEL", "nomic-embed-text:latest"
+                    ),
+                    "api_base": os.getenv("OLLAMA_API_BASE", "http://localhost:11434"),
+                },
+            }
+
+    @staticmethod
     def get_neo4j_config() -> dict[str, Any]:
         """Get Neo4j configuration."""
         return {
             "uri": os.getenv("NEO4J_URI", "bolt://localhost:7687"),
             "user": os.getenv("NEO4J_USER", "neo4j"),
+            "db_name": "default",
             "password": os.getenv("NEO4J_PASSWORD", "12345678"),
             "auto_create": True,
         }
@@ -157,13 +184,7 @@ class APIConfig:
                         "backend": "openai",
                         "config": openai_config,
                     },
-                    "embedder": {
-                        "backend": "ollama",
-                        "config": {
-                            "model_name_or_path": "nomic-embed-text:latest",
-                            "api_base": os.getenv("OLLAMA_API_BASE", "http://localhost:11434"),
-                        },
-                    },
+                    "embedder": APIConfig.get_embedder_config(),
                     "chunker": {
                         "backend": "sentence",
                         "config": {
@@ -252,13 +273,7 @@ class APIConfig:
                         "backend": "openai",
                         "config": openai_config,
                     },
-                    "embedder": {
-                        "backend": "ollama",
-                        "config": {
-                            "model_name_or_path": "nomic-embed-text:latest",
-                            "api_base": os.getenv("OLLAMA_API_BASE", "http://localhost:11434"),
-                        },
-                    },
+                    "embedder": APIConfig.get_embedder_config(),
                     "chunker": {
                         "backend": "sentence",
                         "config": {
@@ -353,13 +368,7 @@ class APIConfig:
                             "backend": "neo4j",
                             "config": neo4j_config,
                         },
-                        "embedder": {
-                            "backend": "ollama",
-                            "config": {
-                                "model_name_or_path": "nomic-embed-text:latest",
-                                "api_base": os.getenv("OLLAMA_API_BASE", "http://localhost:11434"),
-                            },
-                        },
+                        "embedder": APIConfig.get_embedder_config(),
                         "reorganize": os.getenv("MOS_ENABLE_REORGANIZE", "false").lower() == "true",
                     },
                 },
