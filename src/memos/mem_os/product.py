@@ -772,7 +772,7 @@ class MOSProduct(MOSCore):
         current_messages = [
             {"role": "system", "content": system_prompt},
             *chat_history.chat_history,
-            {"role": "user", "content": query + "/nothink"},
+            {"role": "user", "content": query},
         ]
 
         # Generate response with custom prompt

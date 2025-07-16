@@ -77,6 +77,7 @@ def merge_config_with_default(
                 "db_name",
                 "auto_create",
                 "user_name",
+                "use_multi_db",
             }
 
             # Create merged graph_db config
@@ -87,6 +88,14 @@ def merge_config_with_default(
                     logger.debug(
                         f"Updated graph_db field '{key}': {existing_graph_config.get(key)} -> {value}"
                     )
+            if not default_graph_config.get("use_multi_db", True):
+                # set original use_multi_db to False if default_graph_config.use_multi_db is False
+                if merged_graph_config.get("use_multi_db", True):
+                    merged_graph_config["use_multi_db"] = False
+                    merged_graph_config["user_name"] = merged_graph_config.get("db_name")
+                    merged_graph_config["db_name"] = default_graph_config.get("db_name")
+                else:
+                    logger.info("use_multi_db is already False, no need to change")
 
             preserved_graph_db = {
                 "backend": existing_text_config["graph_db"]["backend"],
