@@ -102,6 +102,7 @@ class APIConfig:
                     "api_key": os.getenv("OPENAI_API_KEY", "sk-xxxx"),
                     "model_name_or_path": os.getenv("MOS_EMBEDDER_MODEL", "text-embedding-3-large"),
                     "base_url": os.getenv("OPENAI_API_BASE", "http://openai.com"),
+                    "embedding_dimension": 3072,
                 },
             }
         else:  # ollama
