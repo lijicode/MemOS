@@ -17,6 +17,7 @@ from memos.mem_cube.general import GeneralMemCube
 from memos.mem_os.core import MOSCore
 from memos.mem_os.utils.format_utils import (
     convert_graph_to_tree_forworkmem,
+    ensure_unique_tree_ids,
     filter_nodes_by_tree_ids,
     remove_embedding_recursive,
     sort_children_by_memory_type,
@@ -920,8 +921,10 @@ class MOSProduct(MOSCore):
                     "UserMemory": 0.40,
                 }
                 tree_result, node_type_count = convert_graph_to_tree_forworkmem(
-                    memories, target_node_count=150, type_ratios=custom_type_ratios
+                    memories, target_node_count=200, type_ratios=custom_type_ratios
                 )
+                # Ensure all node IDs are unique in the tree structure
+                tree_result = ensure_unique_tree_ids(tree_result)
                 memories_filtered = filter_nodes_by_tree_ids(tree_result, memories)
                 children = tree_result["children"]
                 children_sort = sort_children_by_memory_type(children)
@@ -1011,6 +1014,8 @@ class MOSProduct(MOSCore):
             tree_result, node_type_count = convert_graph_to_tree_forworkmem(
                 memories, target_node_count=150, type_ratios=custom_type_ratios
             )
+            # Ensure all node IDs are unique in the tree structure
+            tree_result = ensure_unique_tree_ids(tree_result)
             memories_filtered = filter_nodes_by_tree_ids(tree_result, memories)
             children = tree_result["children"]
             children_sort = sort_children_by_memory_type(children)

@@ -493,7 +493,7 @@ def sample_nodes_by_importance(
 # Modified main function to use new sampling strategy
 def convert_graph_to_tree_forworkmem(
     json_data: dict[str, Any],
-    target_node_count: int = 150,
+    target_node_count: int = 200,
     type_ratios: dict[str, float] | None = None,
 ) -> dict[str, Any]:
     """
@@ -1152,3 +1152,191 @@ def convert_activation_memory_summary(act_mem_items: list[KVCacheItem]) -> dict[
         "total_parameters": total_parameters,
         "summary": f"Activation memory contains {total_items} items with {total_layers} layers and approximately {total_parameters:,} parameters",
     }
+
+
+def detect_and_remove_duplicate_ids(tree_node: dict[str, Any]) -> dict[str, Any]:
+    """
+    Detect and remove duplicate IDs in tree structure by skipping duplicate nodes.
+    First occurrence of each ID is kept, subsequent duplicates are removed.
+
+    Args:
+        tree_node: Tree node (dictionary format)
+
+    Returns:
+        dict: Fixed tree node with duplicate nodes removed
+    """
+    used_ids = set()
+    removed_count = 0
+
+    def remove_duplicates_recursive(
+        node: dict[str, Any], parent_path: str = ""
+    ) -> dict[str, Any] | None:
+        """Recursively remove duplicate IDs by skipping duplicate nodes"""
+        nonlocal removed_count
+
+        if not isinstance(node, dict):
+            return node
+
+        # Create node copy
+        fixed_node = node.copy()
+
+        # Handle current node ID
+        current_id = fixed_node.get("id", "")
+        if current_id in used_ids and current_id not in ["root", "WorkingMemory"]:
+            # Skip this duplicate node
+            print(f"Skipping duplicate node: {current_id} (path: {parent_path})")
+            removed_count += 1
+            return None  # Return None to indicate this node should be removed
+        else:
+            used_ids.add(current_id)
+
+        # Recursively process child nodes
+        if "children" in fixed_node and isinstance(fixed_node["children"], list):
+            fixed_children = []
+            for i, child in enumerate(fixed_node["children"]):
+                child_path = f"{parent_path}/{fixed_node.get('node_name', 'unknown')}[{i}]"
+                fixed_child = remove_duplicates_recursive(child, child_path)
+                if fixed_child is not None:  # Only add non-None children
+                    fixed_children.append(fixed_child)
+            fixed_node["children"] = fixed_children
+
+        return fixed_node
+
+    result = remove_duplicates_recursive(tree_node)
+    if result is not None:
+        print(f"Removed {removed_count} duplicate nodes")
+        return result
+    else:
+        # If root node itself was removed (shouldn't happen), return empty root
+        return {
+            "id": "root",
+            "node_name": "root",
+            "value": "root",
+            "memory_type": "Root",
+            "children": [],
+        }
+
+
+def validate_tree_structure(tree_node: dict[str, Any]) -> dict[str, Any]:
+    """
+    Validate tree structure integrity, including ID uniqueness check
+
+    Args:
+        tree_node: Tree node (dictionary format)
+
+    Returns:
+        dict: Validation result containing error messages and fix suggestions
+    """
+    validation_result = {
+        "is_valid": True,
+        "errors": [],
+        "warnings": [],
+        "total_nodes": 0,
+        "unique_ids": set(),
+        "duplicate_ids": set(),
+        "missing_ids": set(),
+        "invalid_structure": [],
+    }
+
+    def validate_recursive(node: dict[str, Any], path: str = "", depth: int = 0):
+        """Recursively validate tree structure"""
+        if not isinstance(node, dict):
+            validation_result["errors"].append(f"Node is not a dictionary: {path}")
+            validation_result["is_valid"] = False
+            return
+
+        validation_result["total_nodes"] += 1
+
+        # Check required fields
+        if "id" not in node:
+            validation_result["errors"].append(f"Node missing ID field: {path}")
+            validation_result["missing_ids"].add(path)
+            validation_result["is_valid"] = False
+        else:
+            node_id = node["id"]
+            if node_id in validation_result["unique_ids"]:
+                validation_result["errors"].append(f"Duplicate node ID: {node_id} (path: {path})")
+                validation_result["duplicate_ids"].add(node_id)
+                validation_result["is_valid"] = False
+            else:
+                validation_result["unique_ids"].add(node_id)
+
+        # Check other required fields
+        required_fields = ["node_name", "value", "memory_type"]
+        for field in required_fields:
+            if field not in node:
+                validation_result["warnings"].append(f"Node missing field '{field}': {path}")
+
+        # Recursively validate child nodes
+        if "children" in node:
+            if not isinstance(node["children"], list):
+                validation_result["errors"].append(f"Children field is not a list: {path}")
+                validation_result["is_valid"] = False
+            else:
+                for i, child in enumerate(node["children"]):
+                    child_path = f"{path}/children[{i}]"
+                    validate_recursive(child, child_path, depth + 1)
+
+        # Check depth limit
+        if depth > 20:
+            validation_result["warnings"].append(f"Tree depth too deep ({depth}): {path}")
+
+    validate_recursive(tree_node)
+
+    # Generate fix suggestions
+    if validation_result["duplicate_ids"]:
+        validation_result["fix_suggestion"] = (
+            "Use detect_and_fix_duplicate_ids() function to fix duplicate IDs"
+        )
+
+    return validation_result
+
+
+def ensure_unique_tree_ids(tree_result: dict[str, Any]) -> dict[str, Any]:
+    """
+    Ensure all node IDs in tree structure are unique by removing duplicate nodes,
+    this is a post-processing function for convert_graph_to_tree_forworkmem
+
+    Args:
+        tree_result: Tree structure returned by convert_graph_to_tree_forworkmem
+
+    Returns:
+        dict: Fixed tree structure with duplicate nodes removed
+    """
+    print("🔍 Starting duplicate ID check in tree structure...")
+
+    # First validate tree structure
+    validation = validate_tree_structure(tree_result)
+
+    if validation["is_valid"]:
+        print("Tree structure validation passed, no duplicate IDs found")
+        return tree_result
+
+    # Report issues
+    print(f"Found {len(validation['errors'])} errors:")
+    for error in validation["errors"][:5]:  # Only show first 5 errors
+        print(f"   - {error}")
+
+    if len(validation["errors"]) > 5:
+        print(f"   ... and {len(validation['errors']) - 5} more errors")
+
+    print("Statistics:")
+    print(f"   - Total nodes: {validation['total_nodes']}")
+    print(f"   - Unique IDs: {len(validation['unique_ids'])}")
+    print(f"   - Duplicate IDs: {len(validation['duplicate_ids'])}")
+
+    # Remove duplicate nodes
+    print(" Starting duplicate node removal...")
+    fixed_tree = detect_and_remove_duplicate_ids(tree_result)
+
+    # Validate again
+    post_validation = validate_tree_structure(fixed_tree)
+    if post_validation["is_valid"]:
+        print("Removal completed, tree structure is now valid")
+        print(f"Final node count: {post_validation['total_nodes']}")
+    else:
+        print("Issues remain after removal, please check code logic")
+        for error in post_validation["errors"][:3]:
+            print(f"   - {error}")
+
+    return fixed_tree
