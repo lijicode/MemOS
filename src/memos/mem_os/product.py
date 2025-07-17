@@ -666,7 +666,7 @@ class MOSProduct(MOSCore):
                 "query": ["query1", "query2", "query3"]
             }}
             """
-        text_mem_result = super().search("my recently memories", user_id=user_id, top_k=10)[
+        text_mem_result = super().search("my recently memories", user_id=user_id, top_k=3)[
             "text_mem"
         ]
         if text_mem_result:
