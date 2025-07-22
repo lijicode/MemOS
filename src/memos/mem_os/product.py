@@ -16,6 +16,7 @@ from memos.log import get_logger
 from memos.mem_cube.general import GeneralMemCube
 from memos.mem_os.core import MOSCore
 from memos.mem_os.utils.format_utils import (
+    clean_json_response,
     convert_graph_to_tree_forworkmem,
     ensure_unique_tree_ids,
     filter_nodes_by_tree_ids,
@@ -657,7 +658,7 @@ class MOSProduct(MOSCore):
             you should generate some suggestion query, the query should be user what to query,
             user recently memories is:
             {memories}
-            please generate 3 suggestion query in English,
+            if the user recently memories is empty, please generate 3 suggestion query in English,
             output should be a json format, the key is "query", the value is a list of suggestion query.
 
             example:
@@ -674,8 +675,8 @@ class MOSProduct(MOSCore):
             memories = ""
         message_list = [{"role": "system", "content": suggestion_prompt.format(memories=memories)}]
         response = self.chat_llm.generate(message_list)
-        response_json = json.loads(response)
-
+        clean_response = clean_json_response(response)
+        response_json = json.loads(clean_response)
         return response_json["query"]
 
     def chat(
