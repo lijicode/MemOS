@@ -368,7 +368,6 @@ class APIConfig:
                             },
                             "embedder": APIConfig.get_embedder_config(),
                         },
-                        "embedder": APIConfig.get_embedder_config(),
                     },
                     "act_mem": {}
                     if os.getenv("ENABLE_ACTIVATION_MEMORY", "false").lower() == "false"
