@@ -239,10 +239,10 @@ def sample_nodes_with_type_balance(
             "MetaMemory": 0.05,  # 5%
         }
 
-    print(
+    logger.info(
         f"Starting type-balanced sampling, original nodes: {len(nodes)}, target nodes: {target_count}"
     )
-    print(f"Target type ratios: {type_ratios}")
+    logger.info(f"Target type ratios: {type_ratios}")
 
     # Analyze current node type distribution
     current_type_counts = {}
@@ -255,7 +255,7 @@ def sample_nodes_with_type_balance(
             nodes_by_type[memory_type] = []
         nodes_by_type[memory_type].append(node)
 
-    print(f"Current type distribution: {current_type_counts}")
+    logger.info(f"Current type distribution: {current_type_counts}")
 
     # Calculate target node count for each type
     type_targets = {}
@@ -290,7 +290,7 @@ def sample_nodes_with_type_balance(
                 )
                 type_targets[memory_type] = type_targets.get(memory_type, 0) + additional
 
-    print(f"Target node count for each type: {type_targets}")
+    logger.info(f"Target node count for each type: {type_targets}")
 
     # Perform subtree quality sampling for each type
     selected_nodes = []
@@ -300,16 +300,18 @@ def sample_nodes_with_type_balance(
             continue
 
         type_nodes = nodes_by_type[memory_type]
-        print(f"\n--- Processing {memory_type} type: {len(type_nodes)} -> {target_for_type} ---")
+        logger.info(
+            f"\n--- Processing {memory_type} type: {len(type_nodes)} -> {target_for_type} ---"
+        )
 
         if len(type_nodes) <= target_for_type:
             selected_nodes.extend(type_nodes)
-            print(f"  Select all: {len(type_nodes)} nodes")
+            logger.info(f"  Select all: {len(type_nodes)} nodes")
         else:
             # Use enhanced subtree quality sampling
             type_selected = sample_by_enhanced_subtree_quality(type_nodes, edges, target_for_type)
             selected_nodes.extend(type_selected)
-            print(f"  Sampled selection: {len(type_selected)} nodes")
+            logger.info(f"  Sampled selection: {len(type_selected)} nodes")
 
     # Filter edges
     selected_node_ids = {node["id"] for node in selected_nodes}
@@ -319,8 +321,8 @@ def sample_nodes_with_type_balance(
         if edge["source"] in selected_node_ids and edge["target"] in selected_node_ids
     ]
 
-    print(f"\nFinal selected nodes: {len(selected_nodes)}")
-    print(f"Final edges: {len(filtered_edges)}")
+    logger.info(f"\nFinal selected nodes: {len(selected_nodes)}")
+    logger.info(f"Final edges: {len(filtered_edges)}")
 
     # Verify final type distribution
     final_type_counts = {}
@@ -328,11 +330,11 @@ def sample_nodes_with_type_balance(
         memory_type = node.get("metadata", {}).get("memory_type", "Unknown")
         final_type_counts[memory_type] = final_type_counts.get(memory_type, 0) + 1
 
-    print(f"Final type distribution: {final_type_counts}")
+    logger.info(f"Final type distribution: {final_type_counts}")
     for memory_type, count in final_type_counts.items():
         percentage = count / len(selected_nodes) * 100
         target_percentage = type_ratios.get(memory_type, 0) * 100
-        print(
+        logger.info(
             f"  {memory_type}: {count} nodes ({percentage:.1f}%, target: {target_percentage:.1f}%)"
         )
 
@@ -358,9 +360,9 @@ def sample_by_enhanced_subtree_quality(
         subtree_analysis.items(), key=lambda x: x[1]["quality_score"], reverse=True
     )
 
-    print("  Subtree quality ranking:")
+    logger.info("  Subtree quality ranking:")
     for i, (root_id, analysis) in enumerate(sorted_subtrees[:5]):
-        print(
+        logger.info(
             f"    #{i + 1} Root node {root_id}: Quality={analysis['quality_score']:.2f}, "
             f"Depth={analysis['max_depth']}, Branches={analysis['branch_nodes']}, "
             f"Leaves={analysis['leaf_count']}, Max Width={analysis['max_width']}"
@@ -386,7 +388,7 @@ def sample_by_enhanced_subtree_quality(
                 if node:
                     selected_nodes.append(node)
                     selected_node_ids.add(node_id)
-            print(f"    Select entire subtree {root_id}: +{len(new_nodes)} nodes")
+            logger.info(f"    Select entire subtree {root_id}: +{len(new_nodes)} nodes")
         else:
             # Subtree too large, need partial selection
             if analysis["quality_score"] > 5:  # Only partial selection for high-quality subtrees
@@ -398,7 +400,7 @@ def sample_by_enhanced_subtree_quality(
                 selected_nodes.extend(partial_selection)
                 for node in partial_selection:
                     selected_node_ids.add(node["id"])
-                print(
+                logger.info(
                     f"    Partial selection of subtree {root_id}: +{len(partial_selection)} nodes"
                 )
 
@@ -411,7 +413,7 @@ def sample_by_enhanced_subtree_quality(
         remaining_count = target_count - len(selected_nodes)
         additional = sample_nodes_by_importance(remaining_nodes, edges, remaining_count)
         selected_nodes.extend(additional)
-        print(f"    Supplementary selection: +{len(additional)} nodes")
+        logger.info(f"    Supplementary selection: +{len(additional)} nodes")
 
     return selected_nodes
 
@@ -502,8 +504,8 @@ def convert_graph_to_tree_forworkmem(
     original_nodes = json_data.get("nodes", [])
     original_edges = json_data.get("edges", [])
 
-    print(f"Original node count: {len(original_nodes)}")
-    print(f"Target node count: {target_node_count}")
+    logger.info(f"Original node count: {len(original_nodes)}")
+    logger.info(f"Target node count: {target_node_count}")
     filter_original_edges = []
     for original_edge in original_edges:
         if original_edge["type"] == "PARENT":
@@ -633,7 +635,7 @@ def convert_graph_to_tree_forworkmem(
 
 
 def print_tree_structure(node: dict[str, Any], level: int = 0, max_level: int = 5):
-    """Print the first few layers of tree structure for easy viewing"""
+    """logger.info the first few layers of tree structure for easy viewing"""
     if level > max_level:
         return
 
@@ -647,21 +649,21 @@ def print_tree_structure(node: dict[str, Any], level: int = 0, max_level: int = 
     children = node.get("children", [])
     if children:
         # Intermediate node, display name, type and child count
-        print(f"{indent}- {node_name} [{memory_type}] ({len(children)} children)")
-        print(f"{indent}  ID: {node_id}")
+        logger.info(f"{indent}- {node_name} [{memory_type}] ({len(children)} children)")
+        logger.info(f"{indent}  ID: {node_id}")
         display_value = node_value[:80] + "..." if len(node_value) > 80 else node_value
-        print(f"{indent}  Value: {display_value}")
+        logger.info(f"{indent}  Value: {display_value}")
 
         if level < max_level:
             for child in children:
                 print_tree_structure(child, level + 1, max_level)
         elif level == max_level:
-            print(f"{indent}  ... (expansion limited)")
+            logger.info(f"{indent}  ... (expansion limited)")
     else:
         # Leaf node, display name, type and value
         display_value = node_value[:80] + "..." if len(node_value) > 80 else node_value
-        print(f"{indent}- {node_name} [{memory_type}]: {display_value}")
-        print(f"{indent}  ID: {node_id}")
+        logger.info(f"{indent}- {node_name} [{memory_type}]: {display_value}")
+        logger.info(f"{indent}  ID: {node_id}")
 
 
 def analyze_final_tree_quality(tree_data: dict[str, Any]) -> dict:
@@ -856,107 +858,107 @@ def analyze_final_tree_quality(tree_data: dict[str, Any]) -> dict:
 
 
 def print_tree_analysis(tree_data: dict[str, Any]):
-    """Print enhanced tree analysis results"""
+    """logger.info enhanced tree analysis results"""
     stats = analyze_final_tree_quality(tree_data)
 
-    print("\n" + "=" * 60)
-    print("🌳 Enhanced Tree Structure Quality Analysis Report")
-    print("=" * 60)
+    logger.info("\n" + "=" * 60)
+    logger.info("🌳 Enhanced Tree Structure Quality Analysis Report")
+    logger.info("=" * 60)
 
     # Basic statistics
-    print("\n📊 Basic Statistics:")
-    print(f"  Total nodes: {stats['total_nodes']}")
-    print(f"  Max depth: {stats['max_depth']}")
-    print(
+    logger.info("\n📊 Basic Statistics:")
+    logger.info(f"  Total nodes: {stats['total_nodes']}")
+    logger.info(f"  Max depth: {stats['max_depth']}")
+    logger.info(
         f"  Leaf nodes: {stats['total_leaves']} ({stats['total_leaves'] / stats['total_nodes'] * 100:.1f}%)"
     )
-    print(
+    logger.info(
         f"  Branch nodes: {stats['total_branches']} ({stats['total_branches'] / stats['total_nodes'] * 100:.1f}%)"
     )
 
     # Structure quality assessment
     structure = stats.get("structure_quality", {})
     if structure:
-        print("\n🏗️  Structure Quality Assessment:")
-        print(
+        logger.info("\n🏗️  Structure Quality Assessment:")
+        logger.info(
             f"  Branch density: {structure['branch_density']:.3f} ({'✅ Good' if 0.2 <= structure['branch_density'] <= 0.6 else '⚠️  Needs improvement'})"
         )
-        print(
+        logger.info(
             f"  Leaf ratio: {structure['leaf_ratio']:.3f} ({'✅ Good' if 0.3 <= structure['leaf_ratio'] <= 0.7 else '⚠️  Needs improvement'})"
         )
-        print(f"  Max width: {structure['max_width']}")
-        print(
+        logger.info(f"  Max width: {structure['max_width']}")
+        logger.info(
             f"  Depth-width ratio: {structure['depth_width_ratio']:.2f} ({'✅ Good' if structure['depth_width_ratio'] <= 3 else '⚠️  Too thin'})"
         )
-        print(
+        logger.info(
             f"  Overall balance: {'✅ Good' if structure['is_well_balanced'] else '⚠️  Needs improvement'}"
         )
 
     # Single chain analysis
     chain_analysis = stats.get("chain_analysis", {})
     if chain_analysis:
-        print("\n🔗 Single Chain Structure Analysis:")
-        print(f"  Longest chain: {chain_analysis.get('max_chain_length', 0)} layers")
-        print(f"  Single chain subtrees: {chain_analysis.get('single_chain_subtrees', 0)}")
-        print(
+        logger.info("\n🔗 Single Chain Structure Analysis:")
+        logger.info(f"  Longest chain: {chain_analysis.get('max_chain_length', 0)} layers")
+        logger.info(f"  Single chain subtrees: {chain_analysis.get('single_chain_subtrees', 0)}")
+        logger.info(
             f"  Single chain subtree ratio: {chain_analysis.get('chain_subtree_ratio', 0) * 100:.1f}%"
         )
 
         if chain_analysis.get("max_chain_length", 0) > 5:
-            print("  ⚠️  Warning: Overly long single chain structure may affect display")
+            logger.info("  ⚠️  Warning: Overly long single chain structure may affect display")
         elif chain_analysis.get("chain_subtree_ratio", 0) > 0.3:
-            print(
+            logger.info(
                 "  ⚠️  Warning: Too many single chain subtrees, suggest increasing branch structure"
             )
         else:
-            print("  ✅ Single chain structure well controlled")
+            logger.info("  ✅ Single chain structure well controlled")
 
     # Type diversity
     type_div = stats.get("type_diversity", {})
     if type_div:
-        print("\n🎨 Type Diversity Analysis:")
-        print(f"  Total types: {type_div['total_types']}")
-        print(f"  Diversity index: {type_div['shannon_diversity']:.3f}")
-        print(f"  Normalized diversity: {type_div['normalized_diversity']:.3f}")
-        print(f"  Distribution balance: {type_div['distribution_balance']:.3f}")
+        logger.info("\n🎨 Type Diversity Analysis:")
+        logger.info(f"  Total types: {type_div['total_types']}")
+        logger.info(f"  Diversity index: {type_div['shannon_diversity']:.3f}")
+        logger.info(f"  Normalized diversity: {type_div['normalized_diversity']:.3f}")
+        logger.info(f"  Distribution balance: {type_div['distribution_balance']:.3f}")
 
     # Type distribution
-    print("\n📋 Type Distribution Details:")
+    logger.info("\n📋 Type Distribution Details:")
     for mem_type, count in sorted(stats["by_type"].items(), key=lambda x: x[1], reverse=True):
         percentage = count / stats["total_nodes"] * 100
-        print(f"  {mem_type}: {count} nodes ({percentage:.1f}%)")
+        logger.info(f"  {mem_type}: {count} nodes ({percentage:.1f}%)")
 
     # Depth distribution
-    print("\n📏 Depth Distribution:")
+    logger.info("\n📏 Depth Distribution:")
     for depth in sorted(stats["by_depth"].keys()):
         count = stats["by_depth"][depth]
-        print(f"  Depth {depth}: {count} nodes")
+        logger.info(f"  Depth {depth}: {count} nodes")
 
     # Major subtree analysis
     if stats["subtrees"]:
-        print("\n🌲 Major Subtree Analysis (sorted by quality):")
+        logger.info("\n🌲 Major Subtree Analysis (sorted by quality):")
         sorted_subtrees = sorted(
             stats["subtrees"], key=lambda x: x.get("quality_score", 0), reverse=True
         )
         for i, subtree in enumerate(sorted_subtrees[:8]):  # Show first 8
             quality = subtree.get("quality_score", 0)
-            print(f"  #{i + 1} {subtree['root']} [{subtree['type']}]:")
-            print(f"    Quality score: {quality:.2f}")
-            print(
+            logger.info(f"  #{i + 1} {subtree['root']} [{subtree['type']}]:")
+            logger.info(f"    Quality score: {quality:.2f}")
+            logger.info(
                 f"    Structure: Depth={subtree['depth']}, Branches={subtree['branches']}, Leaves={subtree['leaves']}"
             )
-            print(
+            logger.info(
                 f"    Density: Branch density={subtree.get('branch_density', 0):.3f}, Leaf ratio={subtree.get('leaf_ratio', 0):.3f}"
             )
 
             if quality > 15:
-                print("    ✅ High quality subtree")
+                logger.info("    ✅ High quality subtree")
             elif quality > 8:
-                print("    🟡 Medium quality subtree")
+                logger.info("    🟡 Medium quality subtree")
             else:
-                print("    🔴 Low quality subtree")
+                logger.info("    🔴 Low quality subtree")
 
-    print("\n" + "=" * 60)
+    logger.info("\n" + "=" * 60)
 
 
 def remove_embedding_recursive(memory_info: dict) -> Any:
@@ -1184,7 +1186,7 @@ def detect_and_remove_duplicate_ids(tree_node: dict[str, Any]) -> dict[str, Any]
         current_id = fixed_node.get("id", "")
         if current_id in used_ids and current_id not in ["root", "WorkingMemory"]:
             # Skip this duplicate node
-            print(f"Skipping duplicate node: {current_id} (path: {parent_path})")
+            logger.info(f"Skipping duplicate node: {current_id} (path: {parent_path})")
             removed_count += 1
             return None  # Return None to indicate this node should be removed
         else:
@@ -1204,7 +1206,7 @@ def detect_and_remove_duplicate_ids(tree_node: dict[str, Any]) -> dict[str, Any]
 
     result = remove_duplicates_recursive(tree_node)
     if result is not None:
-        print(f"Removed {removed_count} duplicate nodes")
+        logger.info(f"Removed {removed_count} duplicate nodes")
         return result
     else:
         # If root node itself was removed (shouldn't happen), return empty root
@@ -1303,41 +1305,41 @@ def ensure_unique_tree_ids(tree_result: dict[str, Any]) -> dict[str, Any]:
     Returns:
         dict: Fixed tree structure with duplicate nodes removed
     """
-    print("🔍 Starting duplicate ID check in tree structure...")
+    logger.info("🔍 Starting duplicate ID check in tree structure...")
 
     # First validate tree structure
     validation = validate_tree_structure(tree_result)
 
     if validation["is_valid"]:
-        print("Tree structure validation passed, no duplicate IDs found")
+        logger.info("Tree structure validation passed, no duplicate IDs found")
         return tree_result
 
     # Report issues
-    print(f"Found {len(validation['errors'])} errors:")
+    logger.info(f"Found {len(validation['errors'])} errors:")
     for error in validation["errors"][:5]:  # Only show first 5 errors
-        print(f"   - {error}")
+        logger.info(f"   - {error}")
 
     if len(validation["errors"]) > 5:
-        print(f"   ... and {len(validation['errors']) - 5} more errors")
+        logger.info(f"   ... and {len(validation['errors']) - 5} more errors")
 
-    print("Statistics:")
-    print(f"   - Total nodes: {validation['total_nodes']}")
-    print(f"   - Unique IDs: {len(validation['unique_ids'])}")
-    print(f"   - Duplicate IDs: {len(validation['duplicate_ids'])}")
+    logger.info("Statistics:")
+    logger.info(f"   - Total nodes: {validation['total_nodes']}")
+    logger.info(f"   - Unique IDs: {len(validation['unique_ids'])}")
+    logger.info(f"   - Duplicate IDs: {len(validation['duplicate_ids'])}")
 
     # Remove duplicate nodes
-    print(" Starting duplicate node removal...")
+    logger.info(" Starting duplicate node removal...")
     fixed_tree = detect_and_remove_duplicate_ids(tree_result)
 
     # Validate again
     post_validation = validate_tree_structure(fixed_tree)
     if post_validation["is_valid"]:
-        print("Removal completed, tree structure is now valid")
-        print(f"Final node count: {post_validation['total_nodes']}")
+        logger.info("Removal completed, tree structure is now valid")
+        logger.info(f"Final node count: {post_validation['total_nodes']}")
     else:
-        print("Issues remain after removal, please check code logic")
+        logger.info("Issues remain after removal, please check code logic")
         for error in post_validation["errors"][:3]:
-            print(f"   - {error}")
+            logger.info(f"   - {error}")
 
     return fixed_tree
 
