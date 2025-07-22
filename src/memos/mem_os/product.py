@@ -764,11 +764,10 @@ class MOSProduct(MOSCore):
         system_prompt = self._build_system_prompt(user_id, memories_list)
 
         # Get chat history
-        target_user_id = user_id if user_id is not None else self.user_id
-        if target_user_id not in self.chat_history_manager:
-            self._register_chat_history(target_user_id)
+        if user_id not in self.chat_history_manager:
+            self._register_chat_history(user_id)
 
-        chat_history = self.chat_history_manager[target_user_id]
+        chat_history = self.chat_history_manager[user_id]
         current_messages = [
             {"role": "system", "content": system_prompt},
             *chat_history.chat_history,
