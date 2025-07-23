@@ -601,7 +601,7 @@ class MOSProduct(MOSCore):
                 try:
                     default_mem_cube.dump(mem_cube_name_or_path)
                 except Exception as e:
-                    print(e)
+                    logger.error(f"Failed to dump default cube: {e}")
 
             # Register the default cube with MOS
             self.register_mem_cube(
@@ -972,7 +972,7 @@ class MOSProduct(MOSCore):
         return reformat_memory_list
 
     def search(
-        self, query: str, user_id: str, install_cube_ids: list[str] | None = None, top_k: int = 20
+        self, query: str, user_id: str, install_cube_ids: list[str] | None = None, top_k: int = 10
     ):
         """Search memories for a specific user."""
         # Validate user access
