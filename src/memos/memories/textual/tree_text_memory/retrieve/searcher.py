@@ -270,7 +270,7 @@ class Searcher:
         """Retrieve and rerank from LongTermMemory and UserMemory"""
         results = []
         tasks = []
-        
+
         with ContextThreadPoolExecutor(max_workers=2) as executor:
             if memory_type in ["All", "LongTermMemory"]:
                 tasks.append(
@@ -296,11 +296,11 @@ class Searcher:
                         search_filter=search_filter,
                     )
                 )
-            
+
             # Collect results from all tasks
             for task in tasks:
                 results.extend(task.result())
-        
+
         return self.reranker.rerank(
             query=query,
             query_embedding=query_embedding[0],

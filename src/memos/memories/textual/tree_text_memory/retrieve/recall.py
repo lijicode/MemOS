@@ -244,7 +244,7 @@ class GraphMemoryRetriever:
         with ContextThreadPoolExecutor(max_workers=2) as executor:
             path_a_future = executor.submit(search_path_a)
             path_b_future = executor.submit(search_path_b)
-            
+
             all_hits.extend(path_a_future.result())
             all_hits.extend(path_b_future.result())
 
