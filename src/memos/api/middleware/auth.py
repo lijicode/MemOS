@@ -27,6 +27,28 @@ AUTH_ENABLED = os.getenv("AUTH_ENABLED", "false").lower() == "true"
 MASTER_KEY_HASH = os.getenv("MASTER_KEY_HASH")  # SHA-256 hash of master key
 INTERNAL_SERVICE_IPS = {"127.0.0.1", "::1", "memos-mcp", "moltbot", "clawdbot"}
 
+SERVER_API_TOKEN = os.getenv("SERVER_API_TOKEN", "").strip()
+def _get_token_from_request(request: Request) -> str | None:
+    token = request.headers.get("memos-api-token")
+    if token:
+        return token
+    auth = request.headers.get("Authorization")
+    if auth and auth.lower().startswith("bearer "):
+        return auth[7:].strip()
+    return None
+
+
+async def verify_server_api_token(request: Request) -> None:
+    if not SERVER_API_TOKEN:
+        return
+    token = _get_token_from_request(request)
+    if not token or token != SERVER_API_TOKEN:
+        raise HTTPException(
+            status_code=401,
+            detail="Invalid or missing API token",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
 # Connection pool for auth queries (lazy init)
 _auth_pool = None
 
