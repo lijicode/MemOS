@@ -39,15 +39,11 @@ def _get_token_from_request(request: Request) -> str | None:
 
 
 async def verify_server_api_token(request: Request) -> None:
-    if not SERVER_API_TOKEN:
-        return
     token = _get_token_from_request(request)
-    if not token or token != SERVER_API_TOKEN:
-        raise HTTPException(
-            status_code=401,
-            detail="Invalid or missing API token",
-            headers={"WWW-Authenticate": "Bearer"},
-        )
+    if not token:
+        raise HTTPException(status_code=401, detail="Invalid or missing API token")
+    if token != SERVER_API_TOKEN:
+        raise HTTPException(status_code=401, detail="Authorization is failed")
 
 # Connection pool for auth queries (lazy init)
 _auth_pool = None
