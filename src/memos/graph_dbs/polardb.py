@@ -164,6 +164,10 @@ class PolarDBGraphDB(BaseGraphDB):
             f" db_name: {self.db_name} maxconn: {maxconn} connection_wait_timeout: {self._connection_wait_timeout}s"
         )
 
+        self._host, self._port, self._user, self._password = host, port, user, password
+        self._bootstrap_db_name = self._get_config_value("bootstrap_db_name") or "postgres"
+
+        self._ensure_database_exists()
         # Create connection pool
         self.connection_pool = psycopg2.pool.ThreadedConnectionPool(
             minconn=5,
@@ -180,26 +184,17 @@ class PolarDBGraphDB(BaseGraphDB):
         )
 
         self._semaphore = threading.BoundedSemaphore(maxconn)
+
+        self._polar_init_extensions()
+        self._polar_init_graph()
+        self._polar_init_vertex_memory()
+        self._polar_init_edge_labels()
+        self._polar_init_indexes()
+
         if self._warm_up_on_startup_by_full:
             self._warm_up_search_connections_by_full()
         if self._warm_up_on_startup_by_all:
             self._warm_up_connections_by_all()
-
-        """
-        # Handle auto_create
-        # auto_create = config.get("auto_create", False) if isinstance(config, dict) else config.auto_create
-        # if auto_create:
-        #     self._ensure_database_exists()
-
-        # Create graph and tables
-        # self.create_graph()
-        # self.create_edge()
-        # self._create_graph()
-
-        # Handle embedding_dimension
-        # embedding_dim = config.get("embedding_dimension", 1024) if isinstance(config,dict) else config.embedding_dimension
-        # self.create_index(dimensions=embedding_dim)
-        """
 
     def _get_config_value(self, key: str, default=None):
         """Safely get config value from either dict or object."""
@@ -207,6 +202,175 @@ class PolarDBGraphDB(BaseGraphDB):
             return self.config.get(key, default)
         else:
             return getattr(self.config, key, default)
+
+
+
+    def _polar_graph_name(self) -> str:
+        return f"{self.db_name}_graph"
+
+    def _polar_init_extensions(self) -> None:
+        extensions = ("polar_age", "vector", "pg_jieba")
+        try:
+            with self._get_connection() as conn, conn.cursor() as cur:
+                for ext in extensions:
+                    try:
+                        cur.execute(f"CREATE EXTENSION IF NOT EXISTS {ext};")
+                        logger.info(f"Extension {ext} ensured.")
+                    except Exception as e:
+                        logger.warning(f"Extension {ext}: {e}")
+
+        except Exception as e:
+            logger.warning(f"Polar init extensions: {e}")
+
+    def _polar_init_graph(self) -> None:
+        graph_name = self._polar_graph_name()
+        try:
+            with self._get_connection() as conn, conn.cursor() as cur:
+                cur.execute(
+                    "SELECT COUNT(*) FROM ag_catalog.ag_graph WHERE name = %s;",
+                    (graph_name,),
+                )
+                if cur.fetchone()[0] > 0:
+                    logger.info(f"Graph '{graph_name}' already exists.")
+                    return
+                cur.execute("SELECT create_graph(%s);", (graph_name,))
+                logger.info(f"Graph '{graph_name}' created.")
+        except Exception as e:
+            logger.warning(f"Polar init graph: {e}")
+
+    def _polar_init_vertex_memory(self) -> None:
+        graph_name = self._polar_graph_name()
+        embed_dim = self._get_config_value("embedding_dimension", 1024)
+        try:
+            with self._get_connection() as conn, conn.cursor() as cur:
+                cur.execute(
+                    """
+                    SELECT EXISTS (
+                        SELECT 1 FROM information_schema.tables
+                        WHERE table_schema = %s AND table_name = 'Memory'
+                    );
+                    """,
+                    (graph_name,),
+                )
+                if not cur.fetchone()[0]:
+                    cur.execute("SELECT create_vlabel(%s, 'Memory');", (graph_name,))
+                    logger.info(f"Vertex label Memory created in graph '{graph_name}'.")
+
+                mem_table = f'{graph_name}."Memory"'
+                columns_to_add = [
+                    (
+                        "embedding",
+                        f"ALTER TABLE {mem_table} ADD COLUMN embedding vector({embed_dim});",
+                    ),
+                    (
+                        "properties_tsvector_zh",
+                        f"""ALTER TABLE {mem_table} ADD COLUMN properties_tsvector_zh tsvector
+                        GENERATED ALWAYS AS (to_tsvector('pg_jieba', agtype_object_field_text(properties, 'memory'))) STORED;""",
+                    ),
+                    ("deteltetime", f"ALTER TABLE {mem_table} ADD COLUMN deteltetime timestamp DEFAULT NULL;"),
+                    ("updatetime", f"ALTER TABLE {mem_table} ADD COLUMN updatetime timestamp DEFAULT NULL;"),
+                ]
+                for col_name, sql in columns_to_add:
+                    try:
+                        cur.execute(
+                            """
+                            SELECT EXISTS (
+                                SELECT 1 FROM information_schema.columns
+                                WHERE table_schema = %s AND table_name = 'Memory' AND column_name = %s
+                            );
+                            """,
+                            (graph_name, col_name),
+                        )
+                        if not cur.fetchone()[0]:
+                            cur.execute(sql)
+                            logger.info(f"Column Memory.{col_name} added.")
+                    except Exception as col_e:
+                        logger.warning(f"Polar init vertex column {col_name}: {col_e}")
+
+        except Exception as e:
+            logger.warning(f"Polar init vertex Memory: {e}")
+
+    def _polar_init_edge_labels(self) -> None:
+        graph_name = self._polar_graph_name()
+        edge_labels = (
+            "Parent",
+            "AGGREGATE_TO",
+            "FOLLOWS",
+            "INFERS",
+            "MERGED_TO",
+            "RELATE_TO",
+            "PARENT",
+            "PRECEDING",
+            "FOLLOWING",
+            "MATERIAL",
+            "SUMMARY",
+            "SIBLING",
+        )
+        for label in edge_labels:
+            try:
+                with self._get_connection() as conn, conn.cursor() as cur:
+                    # 用 information_schema 判断该图 schema 下是否已有该边表，避免依赖 ag_catalog.ag_label 的 OID 等结构
+                    cur.execute(
+                        """
+                        SELECT EXISTS (
+                            SELECT 1 FROM information_schema.tables
+                            WHERE table_schema = %s AND table_name = %s
+                        );
+                        """,
+                        (graph_name, label),
+                    )
+                    if cur.fetchone()[0]:
+                        logger.debug(f"Edge label '{label}' already exists.")
+                        continue
+                    cur.execute("SELECT create_elabel(%s, %s);", (graph_name, label))
+                    logger.info(f"Edge label '{label}' created.")
+            except Exception as e:
+                if "already exists" in str(e).lower():
+                    logger.debug(f"Edge label '{label}' already exists.")
+                else:
+                    logger.warning(f"Polar init edge label '{label}': {e}")
+
+    def _polar_init_indexes(self) -> None:
+        graph_name = self._polar_graph_name()
+        mem_table = f'{graph_name}."Memory"'
+        index_sqls = [
+            f'CREATE INDEX IF NOT EXISTS "Memory_embedding_idx" ON {mem_table} USING hnsw (embedding);',
+            f'CREATE INDEX IF NOT EXISTS "Memory_deletetime_idx" ON {mem_table} USING btree (deteltetime);',
+            f'CREATE INDEX IF NOT EXISTS "Memory_updatetime_idx" ON {mem_table} USING btree (updatetime);',
+            f'''CREATE INDEX IF NOT EXISTS "Memory_user_name_idx" ON {mem_table}
+                USING btree (ag_catalog.agtype_access_operator(VARIADIC ARRAY[properties, '"user_name"'::ag_catalog.agtype]));''',
+            f'''CREATE INDEX IF NOT EXISTS "Memory_id_idx" ON {mem_table}
+                USING btree (ag_catalog.agtype_access_operator(VARIADIC ARRAY[properties, '"id"'::ag_catalog.agtype]));''',
+            f'''CREATE INDEX IF NOT EXISTS "Memory_memory_type_idx" ON {mem_table}
+                USING btree (ag_catalog.agtype_access_operator(VARIADIC ARRAY[properties, '"memory_type"'::ag_catalog.agtype]));''',
+            f'''CREATE INDEX IF NOT EXISTS idx_memory_manager_user_id ON {mem_table}
+                USING btree (ag_catalog.agtype_access_operator(VARIADIC ARRAY[properties, '"manager_user_id"'::ag_catalog.agtype]));''',
+            f'''CREATE INDEX IF NOT EXISTS idx_memory_project_id ON {mem_table}
+                USING btree (ag_catalog.agtype_access_operator(VARIADIC ARRAY[properties, '"project_id"'::ag_catalog.agtype]));''',
+            f'''CREATE INDEX IF NOT EXISTS idx_memory_user_status_type ON {mem_table}
+                USING btree (
+                    ag_catalog.agtype_access_operator(VARIADIC ARRAY[properties, '"user_name"'::ag_catalog.agtype]),
+                    ag_catalog.agtype_access_operator(VARIADIC ARRAY[properties, '"status"'::ag_catalog.agtype]),
+                    ag_catalog.agtype_access_operator(VARIADIC ARRAY[properties, '"memory_type"'::ag_catalog.agtype])
+                ) WHERE (embedding IS NOT NULL);''',
+            f'''CREATE INDEX IF NOT EXISTS idx_memory_user_status_type2 ON {mem_table}
+                USING btree (
+                    ag_catalog.agtype_access_operator(VARIADIC ARRAY[properties, '"user_name"'::ag_catalog.agtype]),
+                    ag_catalog.agtype_access_operator(VARIADIC ARRAY[properties, '"status"'::ag_catalog.agtype]),
+                    ag_catalog.agtype_access_operator(VARIADIC ARRAY[properties, '"memory_type"'::ag_catalog.agtype])
+                );''',
+            f'CREATE INDEX IF NOT EXISTS memos_full_test_zh ON {mem_table} USING gin (properties_tsvector_zh);',
+        ]
+        try:
+            with self._get_connection() as conn, conn.cursor() as cur:
+                for sql in index_sqls:
+                    try:
+                        cur.execute(sql)
+                    except Exception as idx_e:
+                        logger.warning(f"Polar init index: {idx_e}")
+            logger.info("Polar Memory indexes ensured.")
+        except Exception as e:
+            logger.warning(f"Polar init indexes: {e}")
 
     def _warm_up_search_connections_by_full(self, user_name: str | None = None) -> None:
         logger.info("--warm_up_search_connections_by_full--start-up----")
@@ -285,14 +449,55 @@ class PolarDBGraphDB(BaseGraphDB):
             self._semaphore.release()
 
     def _ensure_database_exists(self):
-        """Create database if it doesn't exist."""
+        import psycopg2
+
+        bootstrap_candidates = [self._bootstrap_db_name, "template1"]
+        conn = None
+        for bootstrap_db in bootstrap_candidates:
+            try:
+                conn = psycopg2.connect(
+                    host=self._host,
+                    port=self._port,
+                    user=self._user,
+                    password=self._password,
+                    dbname=bootstrap_db,
+                    connect_timeout=10,
+                )
+                break
+            except Exception as e:
+                logger.warning(
+                    "Cannot connect to bootstrap db %s: %s",
+                    bootstrap_db,
+                    e,
+                )
+                continue
+        if conn is None:
+            logger.error(
+                "Failed to connect to any bootstrap database (%s). "
+                "Ensure one of these exists and set bootstrap_db_name in config if needed.",
+                bootstrap_candidates,
+            )
+            raise RuntimeError(
+                "Cannot connect to bootstrap database to create target DB. "
+                "Tried: %s" % bootstrap_candidates
+            )
         try:
-            # For PostgreSQL/PolarDB, we need to connect to a default database first
-            # This is a simplified implementation - in production you might want to handle this differently
-            logger.info(f"Using database '{self.db_name}'")
+            conn.autocommit = True
+            with conn.cursor() as cur:
+                cur.execute(
+                    "SELECT 1 FROM pg_database WHERE datname = %s;",
+                    (self.db_name,),
+                )
+                if cur.fetchone():
+                    logger.info(f"Database '{self.db_name}' already exists.")
+                    return
+                cur.execute(f'CREATE DATABASE "{self.db_name}";')
+                logger.info(f"Database '{self.db_name}' created.")
         except Exception as e:
-            logger.error(f"Failed to access database '{self.db_name}': {e}")
+            logger.error("_ensure_database_exists failed: %s", e, exc_info=True)
             raise
+        finally:
+            conn.close()
 
     @timed
     def _create_graph(self):
