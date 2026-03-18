@@ -267,8 +267,7 @@ class PolarDBGraphDB(BaseGraphDB):
                         f"""ALTER TABLE {mem_table} ADD COLUMN properties_tsvector_zh tsvector
                         GENERATED ALWAYS AS (to_tsvector('pg_jieba', agtype_object_field_text(properties, 'memory'))) STORED;""",
                     ),
-                    ("deteltetime", f"ALTER TABLE {mem_table} ADD COLUMN deteltetime timestamp DEFAULT NULL;"),
-                    ("updatetime", f"ALTER TABLE {mem_table} ADD COLUMN updatetime timestamp DEFAULT NULL;"),
+                    ("deletetime", f"ALTER TABLE {mem_table} ADD COLUMN deletetime timestamp DEFAULT NULL;"),
                 ]
                 for col_name, sql in columns_to_add:
                     try:
@@ -335,8 +334,7 @@ class PolarDBGraphDB(BaseGraphDB):
         mem_table = f'{graph_name}."Memory"'
         index_sqls = [
             f'CREATE INDEX IF NOT EXISTS "Memory_embedding_idx" ON {mem_table} USING hnsw (embedding);',
-            f'CREATE INDEX IF NOT EXISTS "Memory_deletetime_idx" ON {mem_table} USING btree (deteltetime);',
-            f'CREATE INDEX IF NOT EXISTS "Memory_updatetime_idx" ON {mem_table} USING btree (updatetime);',
+            f'CREATE INDEX IF NOT EXISTS "Memory_deletetime_idx" ON {mem_table} USING btree (deletetime);',
             f'''CREATE INDEX IF NOT EXISTS "Memory_user_name_idx" ON {mem_table}
                 USING btree (ag_catalog.agtype_access_operator(VARIADIC ARRAY[properties, '"user_name"'::ag_catalog.agtype]));''',
             f'''CREATE INDEX IF NOT EXISTS "Memory_id_idx" ON {mem_table}
