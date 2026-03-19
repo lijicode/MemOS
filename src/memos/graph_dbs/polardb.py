@@ -333,7 +333,7 @@ class PolarDBGraphDB(BaseGraphDB):
         graph_name = self._polar_graph_name()
         mem_table = f'{graph_name}."Memory"'
         index_sqls = [
-            f'CREATE INDEX IF NOT EXISTS "Memory_embedding_idx" ON {mem_table} USING hnsw (embedding);',
+            f'CREATE INDEX IF NOT EXISTS "Memory_embedding_idx" ON {mem_table} USING hnsw (embedding vector_cosine_ops) WHERE embedding IS NOT NULL;',
             f'CREATE INDEX IF NOT EXISTS "Memory_deletetime_idx" ON {mem_table} USING btree (deletetime);',
             f'''CREATE INDEX IF NOT EXISTS "Memory_user_name_idx" ON {mem_table}
                 USING btree (ag_catalog.agtype_access_operator(VARIADIC ARRAY[properties, '"user_name"'::ag_catalog.agtype]));''',
@@ -341,6 +341,11 @@ class PolarDBGraphDB(BaseGraphDB):
                 USING btree (ag_catalog.agtype_access_operator(VARIADIC ARRAY[properties, '"id"'::ag_catalog.agtype]));''',
             f'''CREATE INDEX IF NOT EXISTS "Memory_memory_type_idx" ON {mem_table}
                 USING btree (ag_catalog.agtype_access_operator(VARIADIC ARRAY[properties, '"memory_type"'::ag_catalog.agtype]));''',
+            f'''CREATE INDEX IF NOT EXISTS idx_memory_user_name_memory_type ON {mem_table}
+                USING btree (
+                    ag_catalog.agtype_access_operator(properties, '"user_name"'::agtype),
+                    ag_catalog.agtype_access_operator(properties, '"memory_type"'::agtype)
+                );''',
             f'''CREATE INDEX IF NOT EXISTS idx_memory_manager_user_id ON {mem_table}
                 USING btree (ag_catalog.agtype_access_operator(VARIADIC ARRAY[properties, '"manager_user_id"'::ag_catalog.agtype]));''',
             f'''CREATE INDEX IF NOT EXISTS idx_memory_project_id ON {mem_table}
