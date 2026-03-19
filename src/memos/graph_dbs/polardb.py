@@ -264,8 +264,7 @@ class PolarDBGraphDB(BaseGraphDB):
                     ),
                     (
                         "properties_tsvector_zh",
-                        f"""ALTER TABLE {mem_table} ADD COLUMN properties_tsvector_zh tsvector
-                        GENERATED ALWAYS AS (to_tsvector('pg_jieba', agtype_object_field_text(properties, 'memory'))) STORED;""",
+                        f"ALTER TABLE {mem_table} ADD COLUMN properties_tsvector_zh tsvector DEFAULT NULL;",
                     ),
                     ("deletetime", f"ALTER TABLE {mem_table} ADD COLUMN deletetime timestamp DEFAULT NULL;"),
                 ]
@@ -283,8 +282,17 @@ class PolarDBGraphDB(BaseGraphDB):
                         if not cur.fetchone()[0]:
                             cur.execute(sql)
                             logger.info(f"Column Memory.{col_name} added.")
+                        else:
+                            logger.debug(f"Column Memory.{col_name} already exists, skip.")
                     except Exception as col_e:
-                        logger.warning(f"Polar init vertex column {col_name}: {col_e}")
+                        logger.error(
+                            "Polar init vertex column %s failed (sql=%s): %s",
+                            col_name,
+                            sql,
+                            col_e,
+                            exc_info=True,
+                        )
+                        raise
 
         except Exception as e:
             logger.warning(f"Polar init vertex Memory: {e}")
