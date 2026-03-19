@@ -203,8 +203,6 @@ class PolarDBGraphDB(BaseGraphDB):
         else:
             return getattr(self.config, key, default)
 
-
-
     def _polar_graph_name(self) -> str:
         return f"{self.db_name}_graph"
 
@@ -266,7 +264,10 @@ class PolarDBGraphDB(BaseGraphDB):
                         "properties_tsvector_zh",
                         f"ALTER TABLE {mem_table} ADD COLUMN properties_tsvector_zh tsvector DEFAULT NULL;",
                     ),
-                    ("deletetime", f"ALTER TABLE {mem_table} ADD COLUMN deletetime timestamp DEFAULT NULL;"),
+                    (
+                        "deletetime",
+                        f"ALTER TABLE {mem_table} ADD COLUMN deletetime timestamp DEFAULT NULL;",
+                    ),
                 ]
                 for col_name, sql in columns_to_add:
                     try:
@@ -316,7 +317,6 @@ class PolarDBGraphDB(BaseGraphDB):
         for label in edge_labels:
             try:
                 with self._get_connection() as conn, conn.cursor() as cur:
-                    # 用 information_schema 判断该图 schema 下是否已有该边表，避免依赖 ag_catalog.ag_label 的 OID 等结构
                     cur.execute(
                         """
                         SELECT EXISTS (
@@ -343,34 +343,34 @@ class PolarDBGraphDB(BaseGraphDB):
         index_sqls = [
             f'CREATE INDEX IF NOT EXISTS "Memory_embedding_idx" ON {mem_table} USING hnsw (embedding vector_cosine_ops) WHERE embedding IS NOT NULL;',
             f'CREATE INDEX IF NOT EXISTS "Memory_deletetime_idx" ON {mem_table} USING btree (deletetime);',
-            f'''CREATE INDEX IF NOT EXISTS "Memory_user_name_idx" ON {mem_table}
-                USING btree (ag_catalog.agtype_access_operator(VARIADIC ARRAY[properties, '"user_name"'::ag_catalog.agtype]));''',
-            f'''CREATE INDEX IF NOT EXISTS "Memory_id_idx" ON {mem_table}
-                USING btree (ag_catalog.agtype_access_operator(VARIADIC ARRAY[properties, '"id"'::ag_catalog.agtype]));''',
-            f'''CREATE INDEX IF NOT EXISTS "Memory_memory_type_idx" ON {mem_table}
-                USING btree (ag_catalog.agtype_access_operator(VARIADIC ARRAY[properties, '"memory_type"'::ag_catalog.agtype]));''',
-            f'''CREATE INDEX IF NOT EXISTS idx_memory_user_name_memory_type ON {mem_table}
+            f"""CREATE INDEX IF NOT EXISTS "Memory_user_name_idx" ON {mem_table}
+                USING btree (ag_catalog.agtype_access_operator(VARIADIC ARRAY[properties, '"user_name"'::ag_catalog.agtype]));""",
+            f"""CREATE INDEX IF NOT EXISTS "Memory_id_idx" ON {mem_table}
+                USING btree (ag_catalog.agtype_access_operator(VARIADIC ARRAY[properties, '"id"'::ag_catalog.agtype]));""",
+            f"""CREATE INDEX IF NOT EXISTS "Memory_memory_type_idx" ON {mem_table}
+                USING btree (ag_catalog.agtype_access_operator(VARIADIC ARRAY[properties, '"memory_type"'::ag_catalog.agtype]));""",
+            f"""CREATE INDEX IF NOT EXISTS idx_memory_user_name_memory_type ON {mem_table}
                 USING btree (
                     ag_catalog.agtype_access_operator(properties, '"user_name"'::agtype),
                     ag_catalog.agtype_access_operator(properties, '"memory_type"'::agtype)
-                );''',
-            f'''CREATE INDEX IF NOT EXISTS idx_memory_manager_user_id ON {mem_table}
-                USING btree (ag_catalog.agtype_access_operator(VARIADIC ARRAY[properties, '"manager_user_id"'::ag_catalog.agtype]));''',
-            f'''CREATE INDEX IF NOT EXISTS idx_memory_project_id ON {mem_table}
-                USING btree (ag_catalog.agtype_access_operator(VARIADIC ARRAY[properties, '"project_id"'::ag_catalog.agtype]));''',
-            f'''CREATE INDEX IF NOT EXISTS idx_memory_user_status_type ON {mem_table}
+                );""",
+            f"""CREATE INDEX IF NOT EXISTS idx_memory_manager_user_id ON {mem_table}
+                USING btree (ag_catalog.agtype_access_operator(VARIADIC ARRAY[properties, '"manager_user_id"'::ag_catalog.agtype]));""",
+            f"""CREATE INDEX IF NOT EXISTS idx_memory_project_id ON {mem_table}
+                USING btree (ag_catalog.agtype_access_operator(VARIADIC ARRAY[properties, '"project_id"'::ag_catalog.agtype]));""",
+            f"""CREATE INDEX IF NOT EXISTS idx_memory_user_status_type ON {mem_table}
                 USING btree (
                     ag_catalog.agtype_access_operator(VARIADIC ARRAY[properties, '"user_name"'::ag_catalog.agtype]),
                     ag_catalog.agtype_access_operator(VARIADIC ARRAY[properties, '"status"'::ag_catalog.agtype]),
                     ag_catalog.agtype_access_operator(VARIADIC ARRAY[properties, '"memory_type"'::ag_catalog.agtype])
-                ) WHERE (embedding IS NOT NULL);''',
-            f'''CREATE INDEX IF NOT EXISTS idx_memory_user_status_type2 ON {mem_table}
+                ) WHERE (embedding IS NOT NULL);""",
+            f"""CREATE INDEX IF NOT EXISTS idx_memory_user_status_type2 ON {mem_table}
                 USING btree (
                     ag_catalog.agtype_access_operator(VARIADIC ARRAY[properties, '"user_name"'::ag_catalog.agtype]),
                     ag_catalog.agtype_access_operator(VARIADIC ARRAY[properties, '"status"'::ag_catalog.agtype]),
                     ag_catalog.agtype_access_operator(VARIADIC ARRAY[properties, '"memory_type"'::ag_catalog.agtype])
-                );''',
-            f'CREATE INDEX IF NOT EXISTS memos_full_test_zh ON {mem_table} USING gin (properties_tsvector_zh);',
+                );""",
+            f"CREATE INDEX IF NOT EXISTS memos_full_test_zh ON {mem_table} USING gin (properties_tsvector_zh);",
         ]
         try:
             with self._get_connection() as conn, conn.cursor() as cur:
@@ -489,8 +489,8 @@ class PolarDBGraphDB(BaseGraphDB):
                 bootstrap_candidates,
             )
             raise RuntimeError(
-                "Cannot connect to bootstrap database to create target DB. "
-                "Tried: %s" % bootstrap_candidates
+                f"Cannot connect to bootstrap database to create target DB. "
+                f"Tried: {bootstrap_candidates}"
             )
         try:
             conn.autocommit = True
