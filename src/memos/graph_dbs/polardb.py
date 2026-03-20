@@ -99,7 +99,15 @@ def escape_sql_string(value: str) -> str:
 
 
 class PolarDBGraphDB(BaseGraphDB):
-    """PolarDB-based implementation using Apache AGE graph database extension."""
+    """PolarDB-based implementation using Apache AGE graph database extension.
+
+    Client tools (e.g. Navicat table filter):
+        Vertex/edge tables created by AGE use ``id`` of type ``ag_catalog.graphid``, not text/int.
+        GUI filters that generate ``WHERE "id" = '11'`` will fail with
+        ``operator does not exist: ag_catalog.graphid = unknown``.
+        Use raw SQL with explicit casts or filter on ``properties`` (e.g. business ``id`` in agtype),
+        e.g. ``ag_catalog.agtype_access_operator(properties, '\"id\"'::agtype) = '\"your_id\"'::agtype``.
+    """
 
     @require_python_package(
         import_name="psycopg2",
@@ -184,7 +192,7 @@ class PolarDBGraphDB(BaseGraphDB):
         )
 
         self._semaphore = threading.BoundedSemaphore(maxconn)
-
+        self._polar_init_database_defaults()
         self._polar_init_extensions()
         self._polar_init_graph()
         self._polar_init_vertex_memory()
@@ -205,6 +213,24 @@ class PolarDBGraphDB(BaseGraphDB):
 
     def _polar_graph_name(self) -> str:
         return f"{self.db_name}_graph"
+
+    def _polar_init_database_defaults(self) -> None:
+        graph_name = self._polar_graph_name()
+        db_ident = self.db_name.replace('"', '""')
+        graph_ident = graph_name.replace('"', '""')
+        try:
+            with self._get_connection() as conn, conn.cursor() as cur:
+                cur.execute(
+                    f'ALTER DATABASE "{db_ident}" SET search_path TO "{graph_ident}", ag_catalog, "$user", public;'
+                )
+                cur.execute(
+                    f'ALTER DATABASE "{db_ident}" SET session_preload_libraries TO \'polar_age\';'
+                )
+        except Exception as e:
+            logger.warning(
+                "_polar_init_database_defaults skipped or failed (check DB owner / superuser): %s",
+                e,
+            )
 
     def _polar_init_extensions(self) -> None:
         extensions = ("polar_age", "vector", "pg_jieba")
@@ -234,6 +260,9 @@ class PolarDBGraphDB(BaseGraphDB):
                 cur.execute("SELECT create_graph(%s);", (graph_name,))
                 logger.info(f"Graph '{graph_name}' created.")
         except Exception as e:
+            if getattr(e, "pgcode", None) == "23505" or "duplicate key" in str(e).lower():
+                logger.info(f"Graph '{graph_name}' already exists (concurrent create).")
+                return
             logger.warning(f"Polar init graph: {e}")
 
     def _polar_init_vertex_memory(self) -> None:
