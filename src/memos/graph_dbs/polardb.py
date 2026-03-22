@@ -198,6 +198,7 @@ class PolarDBGraphDB(BaseGraphDB):
         self._polar_init_vertex_memory()
         self._polar_init_edge_labels()
         self._polar_init_indexes()
+        self._polar_init_properties_tsvector()
 
         if self._warm_up_on_startup_by_full:
             self._warm_up_search_connections_by_full()
@@ -411,6 +412,119 @@ class PolarDBGraphDB(BaseGraphDB):
             logger.info("Polar Memory indexes ensured.")
         except Exception as e:
             logger.warning(f"Polar init indexes: {e}")
+
+    def _polar_init_properties_tsvector(self) -> None:
+        graph_name = self._polar_graph_name()
+        on_table = f'"{graph_name}"."Memory"'
+        trig_name = "trigger_update_tsvector"
+        create_function_sql = """
+            CREATE OR REPLACE FUNCTION update_properties_tsvector()
+            RETURNS TRIGGER AS $$
+            DECLARE
+                memory_text TEXT;
+            BEGIN
+                IF NEW.properties IS NOT NULL THEN
+                    memory_text := agtype_object_field_text(NEW.properties, 'memory');
+                    IF memory_text IS NOT NULL AND TRIM(memory_text) != '' THEN
+                        NEW.properties_tsvector_zh := to_tsvector('jiebacfg', memory_text);
+                    ELSE
+                        NEW.properties_tsvector_zh := NULL;
+                    END IF;
+                ELSE
+                    NEW.properties_tsvector_zh := NULL;
+                END IF;
+                RETURN NEW;
+            END;
+            $$ LANGUAGE plpgsql;
+            """
+        try:
+            with self._get_connection() as conn, conn.cursor() as cur:
+                cur.execute(
+                    """
+                    SELECT EXISTS (
+                        SELECT 1 FROM information_schema.tables
+                        WHERE table_schema = %s AND table_name = 'Memory'
+                    );
+                    """,
+                    (graph_name,),
+                )
+                if not cur.fetchone()[0]:
+                    logger.warning(
+                        "_polar_init_properties_tsvector: Memory 表不存在 (schema=%s)，跳过",
+                        graph_name,
+                    )
+                    return
+                cur.execute(
+                    """
+                    SELECT EXISTS (
+                        SELECT 1 FROM information_schema.columns
+                        WHERE table_schema = %s AND table_name = 'Memory'
+                          AND column_name = 'properties_tsvector_zh'
+                    );
+                    """,
+                    (graph_name,),
+                )
+                if not cur.fetchone()[0]:
+                    logger.warning(
+                        "_polar_init_properties_tsvector: 无 properties_tsvector_zh 列，跳过触发器"
+                    )
+                    return
+
+                cur.execute(create_function_sql)
+                logger.info("Polar: update_properties_tsvector() 已 CREATE OR REPLACE")
+
+                cur.execute(
+                    """
+                    SELECT EXISTS (
+                        SELECT 1
+                        FROM pg_trigger t
+                        JOIN pg_class c ON t.tgrelid = c.oid
+                        JOIN pg_namespace n ON c.relnamespace = n.oid
+                        WHERE t.tgname = %s
+                          AND NOT t.tgisinternal
+                          AND c.relname = 'Memory'
+                          AND n.nspname = %s
+                    );
+                    """,
+                    (trig_name, graph_name),
+                )
+                if cur.fetchone()[0]:
+                    logger.debug(
+                        "Polar: 触发器 %s 已在 %s.\"Memory\" 上存在，跳过创建",
+                        trig_name,
+                        graph_name,
+                    )
+                    return
+
+                trigger_sql_pg14 = f"""
+                    CREATE TRIGGER {trig_name}
+                    BEFORE INSERT OR UPDATE OF properties
+                    ON {on_table}
+                    FOR EACH ROW
+                    EXECUTE FUNCTION update_properties_tsvector();
+                    """
+                trigger_sql_legacy = f"""
+                    CREATE TRIGGER {trig_name}
+                    BEFORE INSERT OR UPDATE OF properties
+                    ON {on_table}
+                    FOR EACH ROW
+                    EXECUTE PROCEDURE update_properties_tsvector();
+                    """
+                try:
+                    cur.execute(trigger_sql_pg14)
+                except Exception as te:
+                    logger.debug(
+                        "Polar: EXECUTE FUNCTION 创建触发器失败，改用 EXECUTE PROCEDURE: %s",
+                        te,
+                    )
+                    cur.execute(trigger_sql_legacy)
+                logger.info(
+                    "Polar: 已创建触发器 %s ON %s",
+                    trig_name,
+                    on_table,
+                )
+        except Exception as e:
+            logger.warning("_polar_init_properties_tsvector: %s", e, exc_info=True)
 
     def _warm_up_search_connections_by_full(self, user_name: str | None = None) -> None:
         logger.info("--warm_up_search_connections_by_full--start-up----")
