@@ -225,7 +225,7 @@ class PolarDBGraphDB(BaseGraphDB):
                     f'ALTER DATABASE "{db_ident}" SET search_path TO "{graph_ident}", ag_catalog, "$user", public;'
                 )
                 cur.execute(
-                    f'ALTER DATABASE "{db_ident}" SET session_preload_libraries TO \'polar_age\';'
+                    f"ALTER DATABASE \"{db_ident}\" SET session_preload_libraries TO 'polar_age';"
                 )
         except Exception as e:
             logger.warning(
@@ -490,7 +490,7 @@ class PolarDBGraphDB(BaseGraphDB):
                 )
                 if cur.fetchone()[0]:
                     logger.debug(
-                        "Polar: 触发器 %s 已在 %s.\"Memory\" 上存在，跳过创建",
+                        'Polar: 触发器 %s 已在 %s."Memory" 上存在，跳过创建',
                         trig_name,
                         graph_name,
                     )
