@@ -825,6 +825,12 @@ class APIConfig:
                         },
                     },
                     "chat_chunker": reader_config,
+                    "enable_preference_memory": os.getenv(
+                        "ENABLE_PREFERENCE_MEMORY", "false"
+                    ).lower()
+                    == "true",
+                    "enable_skill_memory": os.getenv("ENABLE_SKILL_MEMORY", "true").lower()
+                    == "true",
                     "direct_markdown_hostnames": [
                         h.strip()
                         for h in os.getenv(

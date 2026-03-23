@@ -39,6 +39,14 @@ class BaseMemReaderConfig(BaseConfig):
     chat_chunker: dict[str, Any] = Field(
         default=None, description="Configuration for the MemReader chat chunk strategy"
     )
+    enable_preference_memory: bool = Field(
+        default=False,
+        description="Whether preference memory extraction is enabled for this MemReader.",
+    )
+    enable_skill_memory: bool = Field(
+        default=True,
+        description="Whether skill memory extraction is enabled for this MemReader.",
+    )
 
 
 class SimpleStructMemReaderConfig(BaseMemReaderConfig):

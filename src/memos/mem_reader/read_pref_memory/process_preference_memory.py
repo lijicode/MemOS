@@ -232,7 +232,11 @@ def process_preference_fine(
         List of preference memory items
     """
 
-    if os.getenv("ENABLE_PREFERENCE_MEMORY", "false").lower() != "true":
+    enable_preference_memory = kwargs.get(
+        "enable_preference_memory",
+        os.getenv("ENABLE_PREFERENCE_MEMORY", "false").lower() == "true",
+    )
+    if not enable_preference_memory:
         return []
 
     if not fast_memory_items or not llm:
