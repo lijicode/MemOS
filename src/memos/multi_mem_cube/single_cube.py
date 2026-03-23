@@ -91,6 +91,15 @@ class SingleCubeView(MemCubeView):
         Unified memory search handling (text + preference memories).
         Preference memories are now searched through the same _search_text flow.
         """
+        reader_config = getattr(self.mem_reader, "config", None)
+        search_req = search_req.model_copy(
+            update={
+                "include_skill_memory": search_req.include_skill_memory
+                and getattr(reader_config, "enable_skill_memory", True),
+                "include_preference": search_req.include_preference
+                and getattr(reader_config, "enable_preference_memory", False),
+            }
+        )
         # Create UserContext object
         user_context = UserContext(
             user_id=search_req.user_id,
@@ -103,11 +112,13 @@ class SingleCubeView(MemCubeView):
             "text_mem": [],
             "act_mem": [],
             "para_mem": [],
-            "pref_mem": [],
-            "pref_note": "",
             "tool_mem": [],
-            "skill_mem": [],
         }
+        if search_req.include_preference:
+            memories_result["pref_mem"] = []
+            memories_result["pref_note"] = ""
+        if search_req.include_skill_memory:
+            memories_result["skill_mem"] = []
 
         # Determine search mode
         search_mode = self._get_search_mode(search_req.mode)
@@ -120,6 +131,9 @@ class SingleCubeView(MemCubeView):
             memories_result,
             all_formatted_memories,
             self.cube_id,
+            include_tool_memory=search_req.search_tool_memory,
+            include_skill_memory=search_req.include_skill_memory,
+            include_preference_memory=search_req.include_preference,
         )
 
         self.logger.info(f"Search memories result: {memories_result}")
@@ -685,6 +699,7 @@ class SingleCubeView(MemCubeView):
             extract_mode,
             add_req.mode,
         )
+        reader_config = getattr(self.mem_reader, "config", None)
         init_time = time.time()
         # Extract memories
         memories_local = self.mem_reader.get_memory(
@@ -700,6 +715,8 @@ class SingleCubeView(MemCubeView):
             user_name=user_context.mem_cube_id,
             chat_history=add_req.chat_history,
             user_context=user_context,
+            enable_preference_memory=getattr(reader_config, "enable_preference_memory", False),
+            enable_skill_memory=getattr(reader_config, "enable_skill_memory", True),
         )
         self.logger.info(
             f"Time for get_memory in extract mode {extract_mode}: {time.time() - init_time}"

@@ -1,5 +1,6 @@
 import concurrent.futures
 import json
+import os
 import re
 import traceback
 
@@ -990,6 +991,14 @@ class MultiModalStructMemReader(SimpleStructMemReader):
         else:
             # Part A: call llm in parallel using thread pool
             fine_memory_items = []
+            enable_skill_memory = kwargs.get(
+                "enable_skill_memory",
+                os.getenv("ENABLE_SKILL_MEMORY", "true").lower() == "true",
+            )
+            enable_preference_memory = kwargs.get(
+                "enable_preference_memory",
+                os.getenv("ENABLE_PREFERENCE_MEMORY", "false").lower() == "true",
+            )
 
             with ContextThreadPoolExecutor(max_workers=4) as executor:
                 future_string = executor.submit(
@@ -998,32 +1007,42 @@ class MultiModalStructMemReader(SimpleStructMemReader):
                 future_tool = executor.submit(
                     self._process_tool_trajectory_fine, fast_memory_items, info, **kwargs
                 )
-                future_skill = executor.submit(
-                    process_skill_memory_fine,
-                    fast_memory_items=fast_memory_items,
-                    info=info,
-                    searcher=self.searcher,
-                    graph_db=self.graph_db,
-                    llm=self.llm,
-                    embedder=self.embedder,
-                    oss_config=self.oss_config,
-                    skills_dir_config=self.skills_dir_config,
-                    **kwargs,
+                future_skill = (
+                    executor.submit(
+                        process_skill_memory_fine,
+                        fast_memory_items=fast_memory_items,
+                        info=info,
+                        searcher=self.searcher,
+                        graph_db=self.graph_db,
+                        llm=self.llm,
+                        embedder=self.embedder,
+                        oss_config=self.oss_config,
+                        skills_dir_config=self.skills_dir_config,
+                        **kwargs,
+                    )
+                    if enable_skill_memory
+                    else None
                 )
-                future_pref = executor.submit(
-                    process_preference_fine,
-                    fast_memory_items,
-                    info,
-                    self.llm,
-                    self.embedder,
-                    **kwargs,
+                future_pref = (
+                    executor.submit(
+                        process_preference_fine,
+                        fast_memory_items,
+                        info,
+                        self.llm,
+                        self.embedder,
+                        **kwargs,
+                    )
+                    if enable_preference_memory
+                    else None
                 )
 
                 # Collect results
                 fine_memory_items_string_parser = future_string.result()
                 fine_memory_items_tool_trajectory_parser = future_tool.result()
-                fine_memory_items_skill_memory_parser = future_skill.result()
-                fine_memory_items_pref_parser = future_pref.result()
+                fine_memory_items_skill_memory_parser = (
+                    future_skill.result() if future_skill is not None else []
+                )
+                fine_memory_items_pref_parser = future_pref.result() if future_pref else []
 
             fine_memory_items.extend(fine_memory_items_string_parser)
             fine_memory_items.extend(fine_memory_items_tool_trajectory_parser)
@@ -1067,6 +1086,14 @@ class MultiModalStructMemReader(SimpleStructMemReader):
         }
 
         fine_memory_items = []
+        enable_skill_memory = kwargs.get(
+            "enable_skill_memory",
+            os.getenv("ENABLE_SKILL_MEMORY", "true").lower() == "true",
+        )
+        enable_preference_memory = kwargs.get(
+            "enable_preference_memory",
+            os.getenv("ENABLE_PREFERENCE_MEMORY", "false").lower() == "true",
+        )
         # Part A: call llm in parallel using thread pool
         with ContextThreadPoolExecutor(max_workers=4) as executor:
             future_string = executor.submit(
@@ -1075,28 +1102,37 @@ class MultiModalStructMemReader(SimpleStructMemReader):
             future_tool = executor.submit(
                 self._process_tool_trajectory_fine, raw_nodes, info, **kwargs
             )
-            future_skill = executor.submit(
-                process_skill_memory_fine,
-                raw_nodes,
-                info,
-                searcher=self.searcher,
-                llm=self.llm,
-                embedder=self.embedder,
-                graph_db=self.graph_db,
-                oss_config=self.oss_config,
-                skills_dir_config=self.skills_dir_config,
-                **kwargs,
+            future_skill = (
+                executor.submit(
+                    process_skill_memory_fine,
+                    raw_nodes,
+                    info,
+                    searcher=self.searcher,
+                    llm=self.llm,
+                    embedder=self.embedder,
+                    graph_db=self.graph_db,
+                    oss_config=self.oss_config,
+                    skills_dir_config=self.skills_dir_config,
+                    **kwargs,
+                )
+                if enable_skill_memory
+                else None
             )
-            # Add preference memory extraction
-            future_pref = executor.submit(
-                process_preference_fine, raw_nodes, info, self.llm, self.embedder, **kwargs
+            future_pref = (
+                executor.submit(
+                    process_preference_fine, raw_nodes, info, self.llm, self.embedder, **kwargs
+                )
+                if enable_preference_memory
+                else None
             )
 
             # Collect results
             fine_memory_items_string_parser = future_string.result()
             fine_memory_items_tool_trajectory_parser = future_tool.result()
-            fine_memory_items_skill_memory_parser = future_skill.result()
-            fine_memory_items_pref_parser = future_pref.result()
+            fine_memory_items_skill_memory_parser = (
+                future_skill.result() if future_skill is not None else []
+            )
+            fine_memory_items_pref_parser = future_pref.result() if future_pref else []
 
         fine_memory_items.extend(fine_memory_items_string_parser)
         fine_memory_items.extend(fine_memory_items_tool_trajectory_parser)

@@ -69,6 +69,9 @@ def post_process_textual_mem(
     memories_result: dict[str, Any],
     text_formatted_mem: list[dict[str, Any]],
     mem_cube_id: str,
+    include_tool_memory: bool = True,
+    include_skill_memory: bool = True,
+    include_preference_memory: bool = True,
 ) -> dict[str, Any]:
     """
     Post-process text, tool, skill and preference memory results.
@@ -101,29 +104,32 @@ def post_process_textual_mem(
             "total_nodes": len(fact_mem),
         }
     )
-    memories_result["tool_mem"].append(
-        {
-            "cube_id": mem_cube_id,
-            "memories": tool_mem,
-            "total_nodes": len(tool_mem),
-        }
-    )
-    memories_result["skill_mem"].append(
-        {
-            "cube_id": mem_cube_id,
-            "memories": skill_mem,
-            "total_nodes": len(skill_mem),
-        }
-    )
+    if include_tool_memory:
+        memories_result["tool_mem"].append(
+            {
+                "cube_id": mem_cube_id,
+                "memories": tool_mem,
+                "total_nodes": len(tool_mem),
+            }
+        )
+    if include_skill_memory:
+        memories_result["skill_mem"].append(
+            {
+                "cube_id": mem_cube_id,
+                "memories": skill_mem,
+                "total_nodes": len(skill_mem),
+            }
+        )
 
-    memories_result["pref_mem"].append(
-        {
-            "cube_id": mem_cube_id,
-            "memories": pref_mem,
-            "total_nodes": len(pref_mem),
-        }
-    )
-    if pref_mem:
+    if include_preference_memory:
+        memories_result["pref_mem"].append(
+            {
+                "cube_id": mem_cube_id,
+                "memories": pref_mem,
+                "total_nodes": len(pref_mem),
+            }
+        )
+    if pref_mem and include_preference_memory:
         pref_instruction, pref_note = instruct_completion(pref_mem)
         memories_result["pref_string"] = pref_instruction
         memories_result["pref_note"] = pref_note

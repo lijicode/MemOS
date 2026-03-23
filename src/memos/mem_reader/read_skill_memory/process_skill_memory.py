@@ -1018,6 +1018,14 @@ def process_skill_memory_fine(
     complete_skill_memory: bool = True,
     **kwargs,
 ) -> list[TextualMemoryItem]:
+    enable_skill_memory = kwargs.get(
+        "enable_skill_memory",
+        os.getenv("ENABLE_SKILL_MEMORY", "true").lower() == "true",
+    )
+    if not enable_skill_memory:
+        logger.info("[PROCESS_SKILLS] Skill memory extraction disabled")
+        return []
+
     skills_repo_backend = _get_skill_file_storage_location()
     oss_client, _missing_keys, flag = _skill_init(
         skills_repo_backend, oss_config, skills_dir_config
