@@ -19,15 +19,20 @@ export class IngestWorker {
     private embedder: Embedder,
     private ctx: PluginContext,
   ) {
-    const strongCfg = ctx.config.skillEvolution?.summarizer;
-    this.summarizer = new Summarizer(ctx.config.summarizer, ctx.log, strongCfg);
+    this.summarizer = new Summarizer(ctx.config.summarizer, ctx.log);
     this.taskProcessor = new TaskProcessor(store, ctx);
   }
 
   getTaskProcessor(): TaskProcessor { return this.taskProcessor; }
 
+  private static isEphemeralSession(sessionKey: string): boolean {
+    return sessionKey.startsWith("temp:") || sessionKey.startsWith("internal:") || sessionKey.startsWith("system:");
+  }
+
   enqueue(messages: ConversationMessage[]): void {
-    this.queue.push(...messages);
+    const filtered = messages.filter((m) => !IngestWorker.isEphemeralSession(m.sessionKey));
+    if (filtered.length === 0) return;
+    this.queue.push(...filtered);
     if (!this.processing) {
       this.processQueue().catch((err) => {
         this.ctx.log.error(`Ingest worker error: ${err}`);
@@ -60,11 +65,11 @@ export class IngestWorker {
         let duplicated = 0;
         let errors = 0;
         const resultLines: string[] = [];
-        const inputLines: string[] = [];
+        const inputDetails: Array<{ role: string; content: string }> = [];
 
         while (this.queue.length > 0) {
           const msg = this.queue.shift()!;
-          inputLines.push(`[${msg.role}] ${msg.content}`);
+          inputDetails.push({ role: msg.role, content: msg.content });
           try {
             const result = await this.ingestMessage(msg);
             lastSessionKey = msg.sessionKey;
@@ -72,20 +77,20 @@ export class IngestWorker {
             lastTimestamp = Math.max(lastTimestamp, msg.timestamp);
             if (result === "skipped") {
               skipped++;
-              resultLines.push(`[${msg.role}] ⏭ exact-dup → ${msg.content}`);
+              resultLines.push(JSON.stringify({ role: msg.role, action: "exact-dup", summary: "", content: msg.content }));
             } else if (result.action === "stored") {
               stored++;
-              resultLines.push(`[${msg.role}] ✅ stored → ${result.summary ?? msg.content}`);
+              resultLines.push(JSON.stringify({ role: msg.role, action: "stored", summary: result.summary ?? "", content: msg.content }));
             } else if (result.action === "duplicate") {
               duplicated++;
-              resultLines.push(`[${msg.role}] 🔁 dedup(${result.reason ?? "similar"}) → ${msg.content}`);
+              resultLines.push(JSON.stringify({ role: msg.role, action: "dedup", reason: result.reason ?? "similar", summary: result.summary ?? "", content: msg.content }));
             } else if (result.action === "merged") {
               merged++;
-              resultLines.push(`[${msg.role}] 🔀 merged → ${msg.content}`);
+              resultLines.push(JSON.stringify({ role: msg.role, action: "merged", summary: result.summary ?? "", content: msg.content }));
             }
           } catch (err) {
             errors++;
-            resultLines.push(`[${msg.role}] ❌ error → ${msg.content}`);
+            resultLines.push(JSON.stringify({ role: msg.role, action: "error", summary: "", content: msg.content }));
             this.ctx.log.error(`Failed to ingest message turn=${msg.turnId}: ${err}`);
           }
         }
@@ -98,7 +103,7 @@ export class IngestWorker {
             const inputInfo = {
               session: lastSessionKey,
               messages: batchSize,
-              details: inputLines,
+              details: inputDetails,
             };
             const stats = [`stored=${stored}`, skipped > 0 ? `skipped=${skipped}` : null, duplicated > 0 ? `dedup=${duplicated}` : null, merged > 0 ? `merged=${merged}` : null, errors > 0 ? `errors=${errors}` : null].filter(Boolean).join(", ");
             this.store.recordApiLog("memory_add", inputInfo, `${stats}\n${resultLines.join("\n")}`, dur, errors === 0);
@@ -124,13 +129,7 @@ export class IngestWorker {
   private async ingestMessage(msg: ConversationMessage): Promise<
     "skipped" | { action: "stored" | "duplicate" | "merged"; summary?: string; reason?: string }
   > {
-    if (this.store.chunkExistsByContent(msg.sessionKey, msg.role, msg.content)) {
-      this.ctx.log.debug(`Exact-dup (same session+role+hash), skipping: session=${msg.sessionKey} role=${msg.role} len=${msg.content.length}`);
-      return "skipped";
-    }
-
-    const kind = msg.role === "tool" ? "tool_result" : "paragraph";
-    return await this.storeChunk(msg, msg.content, kind, 0);
+    return await this.storeChunk(msg, msg.content, "paragraph", 0);
   }
 
   private async storeChunk(
@@ -153,21 +152,32 @@ export class IngestWorker {
     let dedupTarget: string | null = null;
     let dedupReason: string | null = null;
     let mergedFromOld: string | null = null;
+    let mergeCount = 0;
+    let mergeHistory = "[]";
 
     // Fast path: exact content_hash match within same owner (agent dimension)
+    // Strategy: retire the OLD chunk, keep the NEW one active (latest wins)
     const chunkOwner = msg.owner ?? "agent:main";
     const existingByHash = this.store.findActiveChunkByHash(content, chunkOwner);
     if (existingByHash) {
-      this.ctx.log.debug(`Exact-dup (owner=${chunkOwner}): hash match → existing=${existingByHash}`);
+      this.ctx.log.debug(`Exact-dup (owner=${chunkOwner}): hash match → retiring old=${existingByHash}, keeping new=${chunkId}`);
       this.store.recordMergeHit(existingByHash, "DUPLICATE", "exact content hash match");
-      dedupStatus = "duplicate";
-      dedupTarget = existingByHash;
+      const oldChunk = this.store.getChunk(existingByHash);
+      this.store.markDedupStatus(existingByHash, "duplicate", chunkId, "exact content hash match");
+      this.store.deleteEmbedding(existingByHash);
+      mergedFromOld = existingByHash;
       dedupReason = "exact content hash match";
+      if (oldChunk) {
+        const oldHistory = JSON.parse(oldChunk.mergeHistory || "[]");
+        oldHistory.push({ action: "duplicate_superseded", at: Date.now(), reason: "exact content hash match", sourceChunkId: existingByHash });
+        mergeHistory = JSON.stringify(oldHistory);
+        mergeCount = (oldChunk.mergeCount || 0) + 1;
+      }
     }
 
     // Smart dedup: find Top-5 similar chunks, then ask LLM to judge
     if (dedupStatus === "active" && embedding) {
-      const similarThreshold = this.ctx.config.dedup?.similarityThreshold ?? 0.60;
+      const similarThreshold = this.ctx.config.dedup?.similarityThreshold ?? 0.80;
       const dedupOwnerFilter = msg.owner ? [msg.owner] : undefined;
       const topSimilar = findTopSimilar(this.store, embedding, similarThreshold, 5, this.ctx.log, dedupOwnerFilter);
 
@@ -178,8 +188,9 @@ export class IngestWorker {
             index: i + 1,
             summary: chunk?.summary ?? "",
             chunkId: s.chunkId,
+            role: chunk?.role,
           };
-        }).filter(c => c.summary);
+        }).filter(c => c.summary && c.role === msg.role);
 
         if (candidates.length > 0) {
           const dedupResult = await this.summarizer.judgeDedup(summary, candidates);
@@ -188,10 +199,18 @@ export class IngestWorker {
             const targetChunkId = candidates[dedupResult.targetIndex - 1]?.chunkId;
             if (targetChunkId) {
               this.store.recordMergeHit(targetChunkId, "DUPLICATE", dedupResult.reason);
-              dedupStatus = "duplicate";
-              dedupTarget = targetChunkId;
+              const oldChunk = this.store.getChunk(targetChunkId);
+              this.store.markDedupStatus(targetChunkId, "duplicate", chunkId, dedupResult.reason);
+              this.store.deleteEmbedding(targetChunkId);
+              mergedFromOld = targetChunkId;
               dedupReason = dedupResult.reason;
-              this.ctx.log.debug(`Smart dedup: DUPLICATE → target=${targetChunkId}, storing with status=duplicate, reason: ${dedupResult.reason}`);
+              if (oldChunk) {
+                const oldHistory = JSON.parse(oldChunk.mergeHistory || "[]");
+                oldHistory.push({ action: "duplicate_superseded", at: Date.now(), reason: dedupResult.reason, sourceChunkId: targetChunkId });
+                mergeHistory = JSON.stringify(oldHistory);
+                mergeCount = (oldChunk.mergeCount || 0) + 1;
+              }
+              this.ctx.log.debug(`Smart dedup: DUPLICATE → retiring old=${targetChunkId}, keeping new=${chunkId} active, reason: ${dedupResult.reason}`);
             }
           }
 
@@ -215,7 +234,23 @@ export class IngestWorker {
 
               mergedFromOld = targetChunkId;
               dedupReason = dedupResult.reason;
-              this.ctx.log.debug(`Smart dedup: UPDATE → old chunk=${targetChunkId} retired, new chunk=${chunkId} gets merged summary, reason: ${dedupResult.reason}`);
+
+              // Inherit merge history from the old chunk
+              if (oldChunk) {
+                const oldHistory = JSON.parse(oldChunk.mergeHistory || "[]");
+                oldHistory.push({
+                  action: "merge",
+                  at: Date.now(),
+                  reason: dedupResult.reason,
+                  from: oldSummary,
+                  to: dedupResult.mergedSummary,
+                  sourceChunkId: targetChunkId,
+                });
+                mergeHistory = JSON.stringify(oldHistory);
+                mergeCount = (oldChunk.mergeCount || 0) + 1;
+              }
+
+              this.ctx.log.debug(`Smart dedup: UPDATE → old chunk=${targetChunkId} retired, new chunk=${chunkId} gets merged summary (mergeCount=${mergeCount}), reason: ${dedupResult.reason}`);
             }
           }
 
@@ -242,9 +277,9 @@ export class IngestWorker {
       dedupStatus,
       dedupTarget,
       dedupReason,
-      mergeCount: 0,
+      mergeCount: mergeCount,
       lastHitAt: null,
-      mergeHistory: "[]",
+      mergeHistory: mergeHistory,
       createdAt: msg.timestamp,
       updatedAt: msg.timestamp,
     };
@@ -255,9 +290,6 @@ export class IngestWorker {
     }
     this.ctx.log.debug(`Stored chunk=${chunkId} kind=${kind} role=${msg.role} dedup=${dedupStatus} len=${content.length} hasVec=${!!embedding && dedupStatus === "active"}`);
 
-    if (dedupStatus === "duplicate") {
-      return { action: "duplicate", summary, targetChunkId: dedupTarget ?? undefined, reason: dedupReason ?? undefined };
-    }
     if (mergedFromOld) {
       return { action: "merged", chunkId, summary, targetChunkId: mergedFromOld, reason: dedupReason ?? undefined };
     }

@@ -51,15 +51,23 @@ class ImageParser(BaseMessageParser):
             if isinstance(image_url, dict):
                 url = image_url.get("url", "")
                 detail = image_url.get("detail", "auto")
+                image_info = image_url
+                return SourceMessage(
+                    type="image",
+                    content=url,
+                    url=url,
+                    detail=detail,
+                    image_info=image_info,
+                )
             else:
                 url = str(image_url)
                 detail = "auto"
-            return SourceMessage(
-                type="image",
-                content=url,
-                url=url,
-                detail=detail,
-            )
+                return SourceMessage(
+                    type="image",
+                    content=url,
+                    url=url,
+                    detail=detail,
+                )
         return SourceMessage(type="image", content=str(message))
 
     def rebuild_from_source(
@@ -74,11 +82,16 @@ class ImageParser(BaseMessageParser):
             or (source.content or "").replace("[image_url]: ", "")
         )
         detail = getattr(source, "detail", "auto")
+        image_id = ""
+        image_info = source.image_info
+        if image_info and isinstance(image_info, dict):
+            image_id = image_info.get("image_id")
         return {
             "type": "image_url",
             "image_url": {
                 "url": url,
                 "detail": detail,
+                "image_id": str(image_id),
             },
         }
 
@@ -88,10 +101,43 @@ class ImageParser(BaseMessageParser):
         info: dict[str, Any],
         **kwargs,
     ) -> list[TextualMemoryItem]:
-        """Parse image_url in fast mode - returns empty list as images need fine mode processing."""
-        # In fast mode, images are not processed (they need vision models)
-        # They will be processed in fine mode via process_transfer
-        return []
+        """Parse image_url in fast mode by preserving the source for fine mode."""
+        if not isinstance(message, dict):
+            logger.warning(f"[ImageParser] Expected dict, got {type(message)}")
+            return []
+
+        source = self.create_source(message, info)
+        url = getattr(source, "url", None) or getattr(source, "content", "")
+        if not url:
+            logger.warning("[ImageParser] No image URL found in fast mode message")
+            return []
+
+        info_ = info.copy()
+        user_id = info_.pop("user_id", "")
+        session_id = info_.pop("session_id", "")
+        content = f"[image_url]: {url}"
+        need_emb = kwargs.get("need_emb", True)
+
+        return [
+            TextualMemoryItem(
+                memory=content,
+                metadata=TreeNodeTextualMemoryMetadata(
+                    user_id=user_id,
+                    session_id=session_id,
+                    memory_type="UserMemory",
+                    status="activated",
+                    tags=["mode:fast", "multimodal:image"],
+                    key=_derive_key(content),
+                    embedding=self.embedder.embed([content])[0] if need_emb else None,
+                    usage=[],
+                    sources=[source],
+                    background="",
+                    confidence=0.99,
+                    type="fact",
+                    info=info_,
+                ),
+            )
+        ]
 
     def parse_fine(
         self,

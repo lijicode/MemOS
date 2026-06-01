@@ -19,7 +19,11 @@ from memos.graph_dbs.base import BaseGraphDB
 from memos.llms.base import BaseLLM
 from memos.log import get_logger
 from memos.mem_reader.read_multi_modal import detect_lang
-from memos.memories.textual.item import TextualMemoryItem, TreeNodeTextualMemoryMetadata
+from memos.memories.textual.item import (
+    SourceMessage,
+    TextualMemoryItem,
+    TreeNodeTextualMemoryMetadata,
+)
 from memos.memories.textual.tree_text_memory.retrieve.searcher import Searcher
 from memos.templates.skill_mem_prompt import (
     OTHERS_GENERATION_PROMPT,
@@ -91,6 +95,7 @@ def _batch_extract_skills(
             try:
                 skill_memory = future.result()
                 if skill_memory:
+                    skill_memory["_task_type"] = task_type
                     results.append((skill_memory, task_type, task_chunks.get(task_type, [])))
             except Exception as e:
                 logger.warning(
@@ -247,36 +252,6 @@ def _batch_generate_skill_details(
     return [item[0] for item in raw_skills_data]
 
 
-def add_id_to_mysql(memory_id: str, mem_cube_id: str):
-    """Add id to mysql, will deprecate this function in the future"""
-    # TODO: tmp function, deprecate soon
-    import requests
-
-    skill_mysql_url = os.getenv("SKILLS_MYSQL_URL", "")
-    skill_mysql_bearer = os.getenv("SKILLS_MYSQL_BEARER", "")
-
-    if not skill_mysql_url or not skill_mysql_bearer:
-        logger.warning("[PROCESS_SKILLS] SKILLS_MYSQL_URL or SKILLS_MYSQL_BEARER is not set")
-        return None
-    headers = {"Authorization": skill_mysql_bearer, "Content-Type": "application/json"}
-    data = {"memCubeId": mem_cube_id, "skillId": memory_id}
-    try:
-        response = requests.post(skill_mysql_url, headers=headers, json=data)
-
-        logger.info(f"[PROCESS_SKILLS] response: \n\n{response.json()}")
-        logger.info(f"[PROCESS_SKILLS] memory_id: \n\n{memory_id}")
-        logger.info(f"[PROCESS_SKILLS] mem_cube_id: \n\n{mem_cube_id}")
-        logger.info(f"[PROCESS_SKILLS] skill_mysql_url: \n\n{skill_mysql_url}")
-        logger.info(f"[PROCESS_SKILLS] skill_mysql_bearer: \n\n{skill_mysql_bearer}")
-        logger.info(f"[PROCESS_SKILLS] headers: \n\n{headers}")
-        logger.info(f"[PROCESS_SKILLS] data: \n\n{data}")
-
-        return response.json()
-    except Exception as e:
-        logger.warning(f"[PROCESS_SKILLS] Error adding id to mysql: {e}")
-        return None
-
-
 @require_python_package(
     import_name="alibabacloud_oss_v2",
     install_command="pip install alibabacloud-oss-v2",
@@ -327,7 +302,7 @@ def _preprocess_extract_messages(
     history = history[-20:]
     if (len(history) + len(messages)) < 10:
         # TODO: maybe directly return []
-        logger.warning("[PROCESS_SKILLS] Not enough messages to extract skill memory")
+        logger.info("[PROCESS_SKILLS] Not enough messages to extract skill memory")
     return history, messages
 
 
@@ -901,6 +876,7 @@ def create_skill_memory_item(
     skill_memory: dict[str, Any],
     info: dict[str, Any],
     embedder: BaseEmbedder | None = None,
+    sources: list[SourceMessage] | None = None,
     **kwargs: Any,
 ) -> TextualMemoryItem:
     info_ = info.copy()
@@ -923,7 +899,7 @@ def create_skill_memory_item(
         status="activated",
         tags=skill_memory.get("tags") or skill_memory.get("trigger", []),
         key=skill_memory.get("name", ""),
-        sources=[],
+        sources=sources or [],
         usage=[],
         background="",
         confidence=0.99,
@@ -942,6 +918,7 @@ def create_skill_memory_item(
         scripts=skill_memory.get("scripts"),
         others=skill_memory.get("others"),
         url=skill_memory.get("url", ""),
+        skill_source=skill_memory.get("skill_source"),
         manager_user_id=manager_user_id,
         project_id=project_id,
     )
@@ -1018,13 +995,20 @@ def process_skill_memory_fine(
     complete_skill_memory: bool = True,
     **kwargs,
 ) -> list[TextualMemoryItem]:
-    enable_skill_memory = kwargs.get(
-        "enable_skill_memory",
-        os.getenv("ENABLE_SKILL_MEMORY", "true").lower() == "true",
-    )
-    if not enable_skill_memory:
-        logger.info("[PROCESS_SKILLS] Skill memory extraction disabled")
-        return []
+    is_upload_skill = kwargs.pop("is_upload_skill", False)
+    if is_upload_skill:
+        from memos.mem_reader.read_skill_memory.upload_skill_memory import (
+            process_upload_skill_memory,
+        )
+
+        return process_upload_skill_memory(
+            fast_memory_items=fast_memory_items,
+            info=info,
+            embedder=embedder,
+            oss_config=oss_config,
+            skills_dir_config=skills_dir_config,
+            **kwargs,
+        )
 
     skills_repo_backend = _get_skill_file_storage_location()
     oss_client, _missing_keys, flag = _skill_init(
@@ -1036,9 +1020,12 @@ def process_skill_memory_fine(
     chat_history = kwargs.get("chat_history")
     if not chat_history or not isinstance(chat_history, list):
         chat_history = []
-        logger.warning("[PROCESS_SKILLS] History is None in Skills")
 
     messages = _reconstruct_messages_from_memory_items(fast_memory_items)
+    tool_rounds = sum(1 for message in messages if message.get("role") == "tool")
+    if tool_rounds < 5:
+        logger.info(f"[PROCESS_SKILLS] Skip skill extraction: tool rounds {tool_rounds} < 5")
+        return []
 
     chat_history, messages = _preprocess_extract_messages(chat_history, messages)
     if not messages:
@@ -1105,6 +1092,7 @@ def process_skill_memory_fine(
                 try:
                     skill_memory = future.result()
                     if skill_memory:
+                        skill_memory["_task_type"] = task_type
                         memories.append(skill_memory)
                 except Exception as e:
                     logger.warning(
@@ -1231,22 +1219,36 @@ def process_skill_memory_fine(
             except Exception as cleanup_error:
                 logger.warning(f"[PROCESS_SKILLS] Error cleaning up local files: {cleanup_error}")
 
+    # Build source lookup: (role, content) → SourceMessage from fast_memory_items
+    source_lookup: dict[tuple[str, str], SourceMessage] = {}
+    for fast_item in fast_memory_items:
+        for source in getattr(fast_item.metadata, "sources", []) or []:
+            source_lookup.setdefault((source.role, source.content), source)
+
     # Create TextualMemoryItem objects
     skill_memory_items = []
     for skill_memory in skill_memories:
         try:
-            memory_item = create_skill_memory_item(skill_memory, info, embedder, **kwargs)
+            # Match sources precisely via the task chunk messages that produced this skill
+            task_type = skill_memory.pop("_task_type", None)
+            chunk_messages = task_chunks.get(task_type, []) if task_type else []
+            skill_sources = []
+            seen = set()
+            for msg in chunk_messages:
+                key = (msg.get("role"), msg.get("content"))
+                if key not in seen:
+                    seen.add(key)
+                    source = source_lookup.get(key)
+                    if source:
+                        skill_sources.append(source)
+
+            skill_memory["skill_source"] = "auto_create"
+            memory_item = create_skill_memory_item(
+                skill_memory, info, embedder, sources=skill_sources, **kwargs
+            )
             skill_memory_items.append(memory_item)
         except Exception as e:
             logger.warning(f"[PROCESS_SKILLS] Error creating skill memory item: {e}")
             continue
 
-    # TODO: deprecate this funtion and call
-    for skill_memory, skill_memory_item in zip(skill_memories, skill_memory_items, strict=False):
-        if skill_memory.get("update", False) and skill_memory.get("old_memory_id", ""):
-            continue
-        add_id_to_mysql(
-            memory_id=skill_memory_item.id,
-            mem_cube_id=kwargs.get("user_name", info.get("user_id", "")),
-        )
     return skill_memory_items
